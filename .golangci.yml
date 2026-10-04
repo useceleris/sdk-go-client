@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - errorlint
+    - gocritic
+    - misspell
+    - nolintlint
+    - revive
+    - unconvert
+    - unparam
+  exclusions:
+    rules:
+      # Examples are documentation: log.Fatal keeps them short.
+      - path: example_test\.go
+        linters: [gocritic]
+        text: exitAfterDefer
+
+formatters:
+  enable:
+    - gofmt

@@ -1,0 +1,9 @@
+# Credentials: .env holds test credentials. .env.example lists the keys.
+.env
+.env.*
+!.env.example
+
+# Coverage output
+*.out
+
+.DS_Store

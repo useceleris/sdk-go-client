@@ -1,0 +1,45 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer run for the same branch or pull request cancels the older one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The whole check on every supported Go, each toolchain used as installed.
+  # No service stack: the live suites run against a private stack.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.27.x"]
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+      - run: go version
+      - run: make check
+      - run: go vet ./...
+        working-directory: live
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+      - run: go test -run '^$' -fuzz FuzzDecode -fuzztime 30s .
