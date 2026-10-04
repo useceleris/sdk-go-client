@@ -82,6 +82,156 @@ func ExampleSegment_PresenceList() {
 	})
 }
 
+// A state listener sees every transition, in the order it happened.
+func ExampleChannelEventHandler_OnStateChange() {
+	var channel *celeris.Channel // from client.Channel("room-42")
+
+	channel.Events().OnStateChange(func(state celeris.ChannelState) {
+		switch state {
+		case celeris.StateReconnecting:
+			fmt.Println("connection lost; recovering")
+		case celeris.StateFailed:
+			fmt.Println("gave up; call Connect to try again")
+		}
+	})
+}
+
+// Failures no caller is waiting for arrive here: errors the server sent, and
+// the SDK's own, such as a message that could not be decoded.
+func ExampleChannelEventHandler_OnError() {
+	var channel *celeris.Channel // from client.Channel("room-42")
+
+	channel.Events().OnError(func(err error) {
+		if serverError, ok := errors.AsType[*celeris.ServerError](err); ok {
+			fmt.Println("server:", serverError.Type, serverError.SubType, serverError.Resource)
+
+			return
+		}
+
+		fmt.Println("sdk:", err)
+	})
+}
+
+// Listeners receive the payload, then its metadata. Registering returns a
+// function that removes the listener; a subscription is cancelled on its own.
+func ExampleSegment_OnMessage() {
+	var chat *celeris.Segment // from channel.Segment("chat")
+
+	stop := chat.OnMessage(func(payload []byte, metadata celeris.MessageMetadata) {
+		sent := time.UnixMilli(metadata.Timestamp)
+		fmt.Println(metadata.TokenReference, "at", sent.Format(time.Kitchen), "said", string(payload))
+	})
+
+	defer stop()
+
+	subscription, err := chat.Subscribe()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer subscription.Cancel()
+}
+
+// Returning nil means the local socket accepted the bytes: there is no
+// receipt. Reuse a message id only to resend the same message; receivers drop
+// the copy.
+func ExampleSegment_PublishWithMessageID() {
+	var chat *celeris.Segment // from channel.Segment("chat")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := chat.PublishWithMessageID(ctx, celeris.TextPayload("Order 1042 shipped"), "order-1042-shipped")
+
+	switch {
+	case err == nil:
+		fmt.Println("handed to the socket")
+	case errors.Is(err, celeris.ErrBackpressure):
+		fmt.Println("64 publishes are waiting; retry later")
+	case errors.Is(err, celeris.ErrDeliveryUnknown):
+		fmt.Println("may or may not have been sent; resend with the same id")
+	default:
+		fmt.Println("not sent:", err)
+	}
+}
+
+// A presence subscription delivers joins and leaves. It also keeps the
+// segment joined for messages.
+func ExampleSegment_SubscribePresence() {
+	var chat *celeris.Segment // from channel.Segment("chat")
+
+	chat.OnPresence(func(event celeris.PresenceEvent) {
+		if event.Joined {
+			fmt.Println(event.TokenReference, "joined on connection", event.ConnectionID)
+		} else {
+			fmt.Println(event.TokenReference, "left from connection", event.ConnectionID)
+		}
+	})
+
+	presence, err := chat.SubscribePresence()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer presence.Cancel()
+}
+
+// Read every page of a segment's presence.
+func ExampleSegment_PresenceList_allPages() {
+	var chat *celeris.Segment // from channel.Segment("chat")
+
+	ctx := context.Background()
+
+	for page := int32(1); ; page++ {
+		result, err := chat.PresenceList(ctx, page, 100)
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		for _, connection := range result.Connections {
+			fmt.Println(connection.TokenReference, connection.ConnectionID)
+		}
+
+		if len(result.Connections) == 0 || result.To >= result.Total {
+			break
+		}
+	}
+}
+
+// Encode a typed value as JSON, and read it back in a listener.
+func ExampleJSONPayload_segment() {
+	var chat *celeris.Segment // from channel.Segment("chat")
+
+	ctx := context.Background()
+
+	type typing struct {
+		Active bool `json:"active"`
+	}
+
+	chat.OnMessage(func(payload []byte, _ celeris.MessageMetadata) {
+		event, err := celeris.ReadJSON[typing](payload)
+
+		if err != nil {
+			return // not a typing event
+		}
+
+		fmt.Println("typing:", event.Active)
+	})
+
+	payload, err := celeris.JSONPayload(typing{Active: true})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := chat.Publish(ctx, payload); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func ExampleChannelEventHandler_OnRecovery() {
 	var channel *celeris.Channel // from client.Channel("room-42")
 
