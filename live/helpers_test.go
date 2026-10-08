@@ -65,7 +65,7 @@ func TestMain(m *testing.M) {
 
 	_ = probe.Close()
 	os.Exit(m.Run())
-}
+} // end function TestMain
 
 // loadEnvironment reads KEY=VALUE lines without replacing variables already
 // set.
@@ -94,7 +94,7 @@ func loadEnvironment(path string) {
 			_ = os.Setenv(key, strings.Trim(strings.TrimSpace(value), `'"`))
 		}
 	}
-}
+} // end function loadEnvironment
 
 // claim is one wire claim; claims are written in the order given, which the
 // tests keep to the wire's own: timestamp, reference, channel_references,
@@ -102,7 +102,7 @@ func loadEnvironment(path string) {
 type claim struct {
 	key   string
 	value any
-}
+} // end struct claim
 
 // signCredentials is hand-written from the protocol document, independent of
 // the server module: client tests never import server code.
@@ -130,7 +130,13 @@ func signCredentials(clientID, signingSecret string, claims ...claim) celeris.Cr
 		payloadJSON += `,"` + entry.key + `":` + string(encoded)
 	}
 
-	payload := base64.StdEncoding.EncodeToString([]byte(payloadJSON + "}"))
+	return signRawPayload(clientID, signingSecret, payloadJSON+"}")
+} // end function signCredentials
+
+// signRawPayload signs any payload text as it is, for claims signCredentials
+// cannot express: malformed JSON, or missing or wrongly typed fields.
+func signRawPayload(clientID, signingSecret, payloadText string) celeris.Credentials {
+	payload := base64.StdEncoding.EncodeToString([]byte(payloadText))
 	digest := hmac.New(sha512.New, []byte(signingSecret))
 	digest.Write([]byte(payload))
 
@@ -138,15 +144,38 @@ func signCredentials(clientID, signingSecret string, claims ...claim) celeris.Cr
 		Payload:   payload,
 		Signature: base64.StdEncoding.EncodeToString([]byte(clientID + ":" + hex.EncodeToString(digest.Sum(nil)))),
 	}
-}
+} // end function signRawPayload
 
-func clientID() string      { return os.Getenv("CELERIS_CLIENT_ID") }
-func signingSecret() string { return os.Getenv("CELERIS_SIGNING_SECRET") }
-func websocketURL() string  { return os.Getenv("CELERIS_WS_URL") }
+func clientID() string {
+	return os.Getenv("CELERIS_CLIENT_ID")
+} // end function clientID
+
+func signingSecret() string {
+	return os.Getenv("CELERIS_SIGNING_SECRET")
+} // end function signingSecret
+
+func websocketURL() string {
+	return os.Getenv("CELERIS_WS_URL")
+} // end function websocketURL
+
+// peerWebsocketURL is CELERIS_WS_URL_PEER, a gateway that routes to a
+// different server node. Without it the calling test skips, because two
+// connections through one gateway can share a node.
+func peerWebsocketURL(t *testing.T) string {
+	t.Helper()
+
+	peer := os.Getenv("CELERIS_WS_URL_PEER")
+
+	if peer == "" {
+		t.Skip("CELERIS_WS_URL_PEER is not set, so a second node cannot be reached.")
+	}
+
+	return peer
+} // end function peerWebsocketURL
 
 func uniqueChannelReference(label string) string {
 	return "goqual-" + label + "-" + strconv.FormatInt(time.Now().UnixMilli(), 10) + "-" + strconv.FormatInt(channelCounter.Add(1), 10)
-}
+} // end function uniqueChannelReference
 
 func clientWith(t *testing.T, baseURL string, provide celeris.CredentialProvider) *celeris.Client {
 	t.Helper()
@@ -162,15 +191,15 @@ func clientWith(t *testing.T, baseURL string, provide celeris.CredentialProvider
 	}
 
 	return client
-}
+} // end function clientWith
 
-func qualificationClient(t *testing.T, claims ...claim) *celeris.Client {
+func qualificationClient(t *testing.T, baseURL string, claims ...claim) *celeris.Client {
 	t.Helper()
 
-	return clientWith(t, websocketURL(), func(context.Context, celeris.CredentialRequest) (celeris.Credentials, error) {
+	return clientWith(t, baseURL, func(context.Context, celeris.CredentialRequest) (celeris.Credentials, error) {
 		return signCredentials(clientID(), signingSecret(), claims...), nil
 	})
-}
+} // end function qualificationClient
 
 func newChannel(t *testing.T, client *celeris.Client, reference string) *celeris.Channel {
 	t.Helper()
@@ -184,19 +213,25 @@ func newChannel(t *testing.T, client *celeris.Client, reference string) *celeris
 	t.Cleanup(channel.Close)
 
 	return channel
-}
+} // end function newChannel
 
 func connectedChannel(t *testing.T, reference string, claims ...claim) *celeris.Channel {
 	t.Helper()
 
-	channel := newChannel(t, qualificationClient(t, claims...), reference)
+	return connectedChannelAt(t, websocketURL(), reference, claims...)
+} // end function connectedChannel
+
+func connectedChannelAt(t *testing.T, baseURL, reference string, claims ...claim) *celeris.Channel {
+	t.Helper()
+
+	channel := newChannel(t, qualificationClient(t, baseURL, claims...), reference)
 
 	if err := channel.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 
 	return channel
-}
+} // end function connectedChannelAt
 
 func segment(t *testing.T, channel *celeris.Channel, segmentID string) *celeris.Segment {
 	t.Helper()
@@ -208,7 +243,7 @@ func segment(t *testing.T, channel *celeris.Channel, segmentID string) *celeris.
 	}
 
 	return handle
-}
+} // end function segment
 
 func subscribe(t *testing.T, handle *celeris.Segment) *celeris.Subscription {
 	t.Helper()
@@ -220,39 +255,43 @@ func subscribe(t *testing.T, handle *celeris.Segment) *celeris.Subscription {
 	}
 
 	return subscription
-}
+} // end function subscribe
 
 type delivery struct {
 	payload  []byte
 	metadata celeris.MessageMetadata
-}
+} // end struct delivery
 
 // collector records every delivery on a segment.
 type collector struct {
 	mutex      sync.Mutex
 	deliveries []delivery
-}
+} // end struct collector
 
 func collect(handle *celeris.Segment) *collector {
 	collected := &collector{}
-	handle.OnMessage(func(payload []byte, metadata celeris.MessageMetadata) {
-		collected.mutex.Lock()
-		collected.deliveries = append(collected.deliveries, delivery{payload, metadata})
-		collected.mutex.Unlock()
-	})
+	handle.OnMessage(collected.record)
 
 	return collected
-}
+} // end function collect
+
+func (collected *collector) record(payload []byte, metadata celeris.MessageMetadata) {
+	collected.mutex.Lock()
+	collected.deliveries = append(collected.deliveries, delivery{payload, metadata})
+	collected.mutex.Unlock()
+} // end method record
 
 func (collected *collector) all() []delivery {
 	collected.mutex.Lock()
 	defer collected.mutex.Unlock()
 
 	return append([]delivery(nil), collected.deliveries...)
-}
+} // end method all
 
-// waitFor registers a listener and waits until one value satisfies predicate.
-func waitFor[Value any](t *testing.T, register func(func(Value)) func(), predicate func(Value) bool, description string, timeout time.Duration) Value {
+// awaitEvent registers its listener at once, before the action that causes
+// the event, and returns the wait for the first value that satisfies
+// predicate.
+func awaitEvent[Value any](t *testing.T, register func(func(Value)) func(), predicate func(Value) bool, description string, timeout time.Duration) func() Value {
 	t.Helper()
 
 	arrived := make(chan Value, 1)
@@ -263,33 +302,71 @@ func waitFor[Value any](t *testing.T, register func(func(Value)) func(), predica
 		}
 	})
 
-	defer remove()
+	return func() Value {
+		t.Helper()
 
-	select {
-	case value := <-arrived:
-		return value
-	case <-time.After(timeout):
-		t.Fatalf("timed out waiting for %s", description)
+		defer remove()
 
-		var zero Value
+		select {
+		case value := <-arrived:
+			return value
+		case <-time.After(timeout):
+			t.Fatalf("timed out waiting for %s", description)
 
-		return zero
+			var zero Value
+
+			return zero
+		}
 	}
-}
+} // end function awaitEvent
+
+// waitFor registers a listener and waits until one value satisfies predicate.
+func waitFor[Value any](t *testing.T, register func(func(Value)) func(), predicate func(Value) bool, description string, timeout time.Duration) Value {
+	t.Helper()
+
+	return awaitEvent(t, register, predicate, description, timeout)()
+} // end function waitFor
+
+// awaitMessage is awaitEvent for a segment's deliveries.
+func awaitMessage(t *testing.T, handle *celeris.Segment, predicate func(delivery) bool, description string, timeout time.Duration) func() delivery {
+	t.Helper()
+
+	return awaitEvent(t, func(deliver func(delivery)) func() {
+		return handle.OnMessage(func(payload []byte, metadata celeris.MessageMetadata) { deliver(delivery{payload, metadata}) })
+	}, predicate, description, timeout)
+} // end function awaitMessage
+
+// withBody matches a delivery whose payload is body.
+func withBody(body string) func(delivery) bool {
+	return func(message delivery) bool { return string(message.payload) == body }
+} // end function withBody
 
 func nextMessage(t *testing.T, handle *celeris.Segment, predicate func(delivery) bool, description string, timeout time.Duration) delivery {
 	t.Helper()
 
-	return waitFor(t, func(deliver func(delivery)) func() {
-		return handle.OnMessage(func(payload []byte, metadata celeris.MessageMetadata) { deliver(delivery{payload, metadata}) })
-	}, predicate, description, timeout)
-}
+	return awaitMessage(t, handle, predicate, description, timeout)()
+} // end function nextMessage
+
+// eventually polls condition every 100 ms until it holds.
+func eventually(t *testing.T, condition func() bool, description string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", description)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+} // end function eventually
 
 func nextError(t *testing.T, channel *celeris.Channel, predicate func(error) bool, description string, timeout time.Duration) error {
 	t.Helper()
 
 	return waitFor(t, channel.Events().OnError, predicate, description, timeout)
-}
+} // end function nextError
 
 func serverErrorOfType(errorType celeris.ServerErrorType) func(error) bool {
 	return func(err error) bool {
@@ -297,7 +374,7 @@ func serverErrorOfType(errorType celeris.ServerErrorType) func(error) bool {
 
 		return ok && serverError.Type == errorType
 	}
-}
+} // end function serverErrorOfType
 
 func patterned(length int) []byte {
 	data := make([]byte, length)
@@ -307,4 +384,4 @@ func patterned(length int) []byte {
 	}
 
 	return data
-}
+} // end function patterned

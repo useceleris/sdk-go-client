@@ -23,7 +23,7 @@ func mustHex(text string) []byte {
 	}
 
 	return decoded
-}
+} // end function mustHex
 
 // protobuf: field 1 varint 150, field 2 "안녕 celeris", field 3 { field 1 = 1 }.
 var protobufVector = mustHex("08 96 01 12 0e ec 95 88 eb 85 95 20 63 65 6c 65 72 69 73 1a 02 08 01")
@@ -45,7 +45,7 @@ func readVarint(data []byte, offset int) (int, int) {
 
 		shift += 7
 	}
-}
+} // end function readVarint
 
 func TestRoundTripsPayloadsByteIdentically(t *testing.T) {
 	jsonVector, err := celeris.JSONPayload(map[string]any{"id": 7, "txt": "héllo 안녕", "nested": map[string]bool{"ok": true}})
@@ -77,11 +77,11 @@ func TestRoundTripsPayloadsByteIdentically(t *testing.T) {
 			switch label {
 			case "json":
 				decoded, err := celeris.ReadJSON[struct {
-					ID  int    `json:"id"`
-					Txt string `json:"txt"`
+					ID   int    `json:"id"`
+					Text string `json:"txt"`
 				}](message.payload)
 
-				if err != nil || decoded.ID != 7 || decoded.Txt != "héllo 안녕" {
+				if err != nil || decoded.ID != 7 || decoded.Text != "héllo 안녕" {
 					t.Fatalf("decoded %+v, %v", decoded, err)
 				}
 			case "protobuf":
@@ -95,4 +95,4 @@ func TestRoundTripsPayloadsByteIdentically(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestRoundTripsPayloadsByteIdentically

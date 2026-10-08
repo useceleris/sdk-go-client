@@ -12,7 +12,7 @@ import (
 )
 
 func TestConnectsWithValidCredentialsAndReceivesTheGreetings(t *testing.T) {
-	channel := newChannel(t, qualificationClient(t), uniqueChannelReference("auth"))
+	channel := newChannel(t, qualificationClient(t, websocketURL()), uniqueChannelReference("auth"))
 	var mutex sync.Mutex
 	var notices []string
 	channel.Events().OnNotice(func(notice celeris.ServerNotice) {
@@ -39,16 +39,23 @@ func TestConnectsWithValidCredentialsAndReceivesTheGreetings(t *testing.T) {
 	if !strings.Contains(joined, "Successfully connected") || !strings.Contains(joined, `segment "default"`) {
 		t.Fatalf("notices %q", joined)
 	}
-}
+} // end function TestConnectsWithValidCredentialsAndReceivesTheGreetings
 
 // DEV-02: a refused handshake is never labelled an authorization failure.
 func TestRefusedCredentialsAreTransportFailures(t *testing.T) {
 	cases := map[string]celeris.Credentials{
 		"invalid signature": signCredentials(clientID(), "wrong-secret"),
 		"unknown client":    signCredentials("no-such-client", signingSecret()),
-		"expired":           signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(-61 * time.Minute).UnixMilli()}),
+		"expired":           signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(-61 * time.Second).UnixMilli()}),
+		"an hour old":       signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(-59 * time.Minute).UnixMilli()}),
 		"future":            signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(5 * time.Minute).UnixMilli()}),
 		"other channel":     signCredentials(clientID(), signingSecret(), claim{"channel_references", []string{"some-other-channel"}}),
+
+		"an empty reference":                   signCredentials(clientID(), signingSecret(), claim{"reference", ""}),
+		"a payload that is not JSON":           signRawPayload(clientID(), signingSecret(), "not json"),
+		"a payload without a timestamp":        signRawPayload(clientID(), signingSecret(), `{"reference":"x"}`),
+		"a timestamp that is a string":         signRawPayload(clientID(), signingSecret(), `{"timestamp":"now"}`),
+		"a timestamp 30 seconds in the future": signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(30 * time.Second).UnixMilli()}),
 	}
 
 	for name, credentials := range cases {
@@ -56,6 +63,7 @@ func TestRefusedCredentialsAreTransportFailures(t *testing.T) {
 			client := clientWith(t, websocketURL(), func(context.Context, celeris.CredentialRequest) (celeris.Credentials, error) {
 				return credentials, nil
 			})
+
 			channel := newChannel(t, client, uniqueChannelReference("refused"))
 			err := channel.Connect(t.Context())
 
@@ -68,13 +76,11 @@ func TestRefusedCredentialsAreTransportFailures(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestRefusedCredentialsAreTransportFailures
 
-// Documented intent is a 60-second window; the server accepts up to 60
-// minutes (D-001 evidence: recorded, not relied upon).
-func TestAcceptsAStaleTimestampInsideTheObservedWindow(t *testing.T) {
-	connectedChannel(t, uniqueChannelReference("window"), claim{"timestamp", time.Now().Add(-59 * time.Minute).UnixMilli()})
-}
+func TestAcceptsATimestampInsideTheSixtySecondWindow(t *testing.T) {
+	connectedChannel(t, uniqueChannelReference("window"), claim{"timestamp", time.Now().Add(-30 * time.Second).UnixMilli()})
+} // end function TestAcceptsATimestampInsideTheSixtySecondWindow
 
 func TestAcceptsAChannelInsideTheTokensRestriction(t *testing.T) {
 	reference := uniqueChannelReference("allowed")
@@ -82,7 +88,25 @@ func TestAcceptsAChannelInsideTheTokensRestriction(t *testing.T) {
 	if channel := connectedChannel(t, reference, claim{"channel_references", []string{reference}}); channel.State() != celeris.StateConnected {
 		t.Fatalf("state %s", channel.State())
 	}
-}
+} // end function TestAcceptsAChannelInsideTheTokensRestriction
+
+func TestAcceptsAnEmptyChannelRestrictionWhichPermitsEveryChannel(t *testing.T) {
+	channel := connectedChannel(t, uniqueChannelReference("any"), claim{"channel_references", []string{}})
+
+	if channel.State() != celeris.StateConnected {
+		t.Fatalf("state %s", channel.State())
+	}
+} // end function TestAcceptsAnEmptyChannelRestrictionWhichPermitsEveryChannel
+
+func TestAcceptsAChannelThatIsOneOfSeveralInTheRestriction(t *testing.T) {
+	reference := uniqueChannelReference("several")
+
+	channel := connectedChannel(t, reference, claim{"channel_references", []string{"some-other-channel", reference}})
+
+	if channel.State() != celeris.StateConnected {
+		t.Fatalf("state %s", channel.State())
+	}
+} // end function TestAcceptsAChannelThatIsOneOfSeveralInTheRestriction
 
 // Credentials are requested fresh for every attempt (D-001).
 func TestRequestsFreshCredentialsForEveryConnect(t *testing.T) {
@@ -112,4 +136,4 @@ func TestRequestsFreshCredentialsForEveryConnect(t *testing.T) {
 	if len(requests) != 2 || requests[0].Reconnect || requests[1].Reconnect {
 		t.Fatalf("requests %+v", requests)
 	}
-}
+} // end function TestRequestsFreshCredentialsForEveryConnect

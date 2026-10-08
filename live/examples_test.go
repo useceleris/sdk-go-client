@@ -48,4 +48,4 @@ func TestRunsTheQuickstart(t *testing.T) {
 	if !regexp.MustCompile(`example: ok delivered=[1-9]\d* present=\d+`).Match(output) {
 		t.Fatalf("output:\n%s", output)
 	}
-}
+} // end function TestRunsTheQuickstart
