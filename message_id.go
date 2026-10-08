@@ -12,4 +12,4 @@ func generateMessageID() string {
 	_, _ = rand.Read(random) // never fails: crypto/rand aborts the program instead
 
 	return hex.EncodeToString(random)
-}
+} // end function generateMessageID

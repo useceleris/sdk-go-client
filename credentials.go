@@ -19,23 +19,23 @@ import (
 type Credentials struct {
 	Payload   string `json:"payload"`
 	Signature string `json:"signature"`
-}
+} // end struct Credentials
 
 const redactedCredentials = "celeris.Credentials{redacted}"
 
 func (Credentials) String() string {
 	return redactedCredentials
-}
+} // end method String
 
 // Format redacts the credentials for every fmt verb, %#v and %d included.
 func (Credentials) Format(state fmt.State, _ rune) {
 	_, _ = io.WriteString(state, redactedCredentials)
-}
+} // end method Format
 
 // LogValue redacts the credentials in [slog] output.
 func (Credentials) LogValue() slog.Value {
 	return slog.StringValue("redacted")
-}
+} // end method LogValue
 
 // CredentialRequest describes the attempt credentials are wanted for. They
 // are requested fresh for every attempt, reconnects included (D-001).
@@ -54,7 +54,7 @@ type CredentialRequest struct {
 	// plus five seconds of overlap. It is zero unless Reconnect is true. The
 	// signing server decides whether to sign any replay into the credentials.
 	ReplayLookback time.Duration
-}
+} // end struct CredentialRequest
 
 // CredentialProvider fetches credentials for one attempt, typically from your
 // own credential endpoint. It must honour ctx: the attempt's deadline and
@@ -89,4 +89,4 @@ func validateCredentials(credentials Credentials) error {
 	}
 
 	return nil
-}
+} // end function validateCredentials

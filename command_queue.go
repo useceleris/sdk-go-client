@@ -3,6 +3,7 @@ package celeris
 import (
 	"container/list"
 	"slices"
+	"strconv"
 	"time"
 )
 
@@ -30,7 +31,7 @@ type queuedPublish struct {
 
 	// The connection it was last handed to, or nil while it is queued.
 	connection *connection
-}
+} // end struct queuedPublish
 
 func (publish *queuedPublish) settle(err error) {
 	if publish.settled {
@@ -39,18 +40,18 @@ func (publish *queuedPublish) settle(err error) {
 
 	publish.settled = true
 	publish.result <- err
-}
+} // end method settle
 
 type sentInterest struct {
 	kind      interestKind
 	segmentID string
 	sentAt    time.Time
-}
+} // end struct sentInterest
 
 type sentPublish struct {
 	publish *queuedPublish
 	sentAt  time.Time
-}
+} // end struct sentPublish
 
 // commandQueue sends subscription changes ahead of publishes, waits for room
 // in the writer, and resends recent commands after a rate limit
@@ -87,17 +88,19 @@ type commandQueue struct {
 
 	// Zero until a command is sent after the latest rate limit.
 	firstSentSinceRateLimitAt time.Time
-}
+} // end struct commandQueue
 
 func (queue *commandQueue) queueInterest(kind interestKind, segmentID string) {
 	queue.markInterest(kind, segmentID)
 	queue.drain()
-}
+} // end method queueInterest
 
 // publish queues a publish, which settles once written to the socket.
 func (queue *commandQueue) publish(segmentID string, data []byte) (*queuedPublish, error) {
-	if len(queue.publishes) >= maximumPendingCommands {
-		return nil, newError(ErrBackpressure, "64 publishes are already waiting to be sent. Retry once some have gone out.")
+	limit := queue.channel.client.publishQueueSize
+
+	if len(queue.publishes) >= limit {
+		return nil, newError(ErrBackpressure, "The publish queue is full (size "+strconv.Itoa(limit)+"). Retry once some publishes have gone out.")
 	}
 
 	queue.sequence++
@@ -106,7 +109,7 @@ func (queue *commandQueue) publish(segmentID string, data []byte) (*queuedPublis
 	queue.drain()
 
 	return publish, nil
-}
+} // end method publish
 
 // withdraw removes a publish that has not been handed to the writer, and
 // reports whether it did.
@@ -120,7 +123,7 @@ func (queue *commandQueue) withdraw(publish *queuedPublish) bool {
 	queue.publishes = slices.Delete(queue.publishes, index, index+1)
 
 	return true
-}
+} // end method withdraw
 
 // sendNow hands over a command that is never queued or resent, such as a
 // presence query.
@@ -136,7 +139,7 @@ func (queue *commandQueue) sendNow(connection *connection, data []byte) error {
 	queue.handOff(connection, &outboundFrame{data: data})
 
 	return nil
-}
+} // end method sendNow
 
 func (queue *commandQueue) receiveRateLimit() {
 	// A limit arriving while sending is paused, with nothing sent since the
@@ -188,31 +191,85 @@ func (queue *commandQueue) receiveRateLimit() {
 	})
 
 	queue.pauseTimer = timer
-}
+} // end method receiveRateLimit
 
-// reset fails waiting publishes and forgets everything tied to the socket:
-// the next one re-syncs every subscription itself. The rate-limit streak and
-// the probe schedule stay, since a reconnect does not refill a quota.
+// reset fails every waiting publish with err and empties the queue, for a
+// channel that stopped in failed or closed: nothing waits for a later
+// connect (QUEUE-01).
 func (queue *commandQueue) reset(err error) {
+	for _, publish := range queue.publishes {
+		publish.settle(err)
+	}
+
+	queue.publishes = nil
+
+	for _, kind := range interestKinds {
+		queue.pendingInterests[kind].clear()
+	}
+
+	queue.dropConnection()
+} // end method reset
+
+// dropConnection forgets everything tied to the socket that dropped and keeps
+// what still waits to be sent (QUEUE-01): publishes never handed to a socket,
+// and subscription changes, which still follow the publishes queued before
+// them. A copy queued for a rate-limit resend is dropped: a publish the socket
+// never wrote comes back from the writer (connection.takeUnwritten), and one
+// it wrote is never sent again. The rate-limit streak and the probe schedule
+// stay, since a reconnect does not refill a quota.
+func (queue *commandQueue) dropConnection() {
 	stopTimer(&queue.pauseTimer)
 	stopTimer(&queue.probeTimer)
 
 	for _, kind := range interestKinds {
-		queue.pendingInterests[kind].clear()
 		queue.abandonedInterests[kind].clear()
 	}
 
 	queue.recentInterests = nil
 	queue.recentPublishes = nil
 	queue.firstSentSinceRateLimitAt = time.Time{}
+	queue.publishes = slices.DeleteFunc(queue.publishes, func(publish *queuedPublish) bool {
+		return publish.connection != nil
+	})
+} // end method dropConnection
 
-	publishes := queue.publishes
-	queue.publishes = nil
+// putBack returns publishes a dropped socket never started writing to the
+// front of the queue, in their order, ahead of everything queued after them.
+func (queue *commandQueue) putBack(publishes []*queuedPublish) {
+	queue.publishes = append(publishes, queue.publishes...)
+} // end method putBack
 
-	for _, publish := range publishes {
-		publish.settle(err)
+// restore syncs every held subscription to a new socket: messages, then
+// presence, each in registration order. A sequence of zero puts it ahead of
+// every queued publish, even one queued before the connection dropped, so the
+// connection is a member of its segments again before its publishes join
+// theirs (QUEUE-01).
+//
+// A new socket holds no subscription, so a waiting change that drops one is
+// kept only behind a queued publish to its segment, which joins it. A publish
+// never subscribes to presence.
+func (queue *commandQueue) restore() {
+	for _, kind := range interestKinds {
+		pending := &queue.pendingInterests[kind]
+
+		for _, segmentID := range pending.keys() {
+			published := slices.ContainsFunc(queue.publishes, func(publish *queuedPublish) bool {
+				return publish.segmentID == segmentID
+			})
+
+			if kind == presenceInterest || !published {
+				pending.remove(segmentID)
+			}
+		}
+
+		for _, segmentID := range queue.channel.interests(kind).keys() {
+			pending.remove(segmentID)
+			pending.set(segmentID, 0)
+		}
 	}
-}
+
+	queue.drain()
+} // end method restore
 
 // handOff gives a command to the writer and records it as sent, as the
 // reference does when it hands a command to the socket: a rate limit resends
@@ -227,14 +284,14 @@ func (queue *commandQueue) handOff(connection *connection, frame *outboundFrame)
 	if queue.firstSentSinceRateLimitAt.IsZero() {
 		queue.firstSentSinceRateLimitAt = time.Now()
 	}
-}
+} // end method handOff
 
 // markInterest gives the change a newer sequence, so the sync follows every
 // publish queued before it.
 func (queue *commandQueue) markInterest(kind interestKind, segmentID string) {
 	queue.sequence++
 	queue.pendingInterests[kind].set(segmentID, queue.sequence)
-}
+} // end method markInterest
 
 func (queue *commandQueue) requeueRecent(now time.Time) {
 	for _, sent := range queue.recentInterests {
@@ -253,7 +310,7 @@ func (queue *commandQueue) requeueRecent(now time.Time) {
 	}
 
 	queue.publishes = append(resent, queue.publishes...)
-}
+} // end method requeueRecent
 
 // abandonRecent drops recent publishes, and hands every subscription sent
 // since the previous limit to the quota probe, however late the report:
@@ -294,7 +351,7 @@ func (queue *commandQueue) abandonRecent() {
 	})
 
 	queue.probeTimer = timer
-}
+} // end method abandonRecent
 
 func (queue *commandQueue) restoreAbandoned() {
 	for _, kind := range interestKinds {
@@ -304,7 +361,7 @@ func (queue *commandQueue) restoreAbandoned() {
 
 		queue.abandonedInterests[kind].clear()
 	}
-}
+} // end method restoreAbandoned
 
 // endProbingIfQuotaReturned restores abandoned subscriptions at once when
 // commands went quietSpan without a rate limit following them: the quota is
@@ -318,7 +375,7 @@ func (queue *commandQueue) endProbingIfQuotaReturned(now time.Time, quietSpan ti
 	queue.probeCount = 0
 	queue.rateLimitStreak = 0
 	queue.restoreAbandoned()
-}
+} // end method endProbingIfQuotaReturned
 
 // drain hands commands to the writer while it has room. The writer drains
 // again whenever it finishes a write, so a full writer only delays commands.
@@ -349,7 +406,7 @@ func (queue *commandQueue) drain() {
 		publish.connection = connection
 		queue.handOff(connection, &outboundFrame{data: publish.data, publish: publish})
 	}
-}
+} // end method drain
 
 // nextReadyInterest finds the first subscription change with no earlier
 // publish to its segment still queued: publishing joins the segment, so a
@@ -377,7 +434,7 @@ func (queue *commandQueue) nextReadyInterest() (interestKind, string, bool) {
 	}
 
 	return 0, "", false
-}
+} // end method nextReadyInterest
 
 // handOffInterest hands the writer the command that brings the server in line
 // with the segment's interest as it stands now. It reports false when the
@@ -401,14 +458,14 @@ func (queue *commandQueue) handOffInterest(connection *connection, kind interest
 	queue.pendingInterests[kind].remove(segmentID)
 
 	return true
-}
+} // end method handOffInterest
 
 // forget drops a cancelled publish from the resend record.
 func (queue *commandQueue) forget(publish *queuedPublish) {
 	queue.recentPublishes = slices.DeleteFunc(queue.recentPublishes, func(sent sentPublish) bool {
 		return sent.publish == publish
 	})
-}
+} // end method forget
 
 func (queue *commandQueue) recordSentInterest(kind interestKind, segmentID string) {
 	now := time.Now()
@@ -419,7 +476,7 @@ func (queue *commandQueue) recordSentInterest(kind interestKind, segmentID strin
 	}
 
 	queue.recentInterests = append(queue.recentInterests[expired:], sentInterest{kind: kind, segmentID: segmentID, sentAt: now})
-}
+} // end method recordSentInterest
 
 func (queue *commandQueue) recordSentPublish(publish *queuedPublish) {
 	now := time.Now()
@@ -430,7 +487,7 @@ func (queue *commandQueue) recordSentPublish(publish *queuedPublish) {
 	}
 
 	queue.recentPublishes = append(queue.recentPublishes[expired:], sentPublish{publish: publish, sentAt: now})
-}
+} // end method recordSentPublish
 
 // stopTimer stops a timer, if there is one, and forgets it.
 func stopTimer(timer **time.Timer) {
@@ -438,7 +495,7 @@ func stopTimer(timer **time.Timer) {
 		(*timer).Stop()
 		*timer = nil
 	}
-}
+} // end function stopTimer
 
 // orderedMap keeps keys in the order they were first set, as the reference's
 // Map does: restoration and resends follow registration order. Setting,
@@ -446,12 +503,12 @@ func stopTimer(timer **time.Timer) {
 type orderedMap[Value any] struct {
 	order    list.List
 	elements map[string]*list.Element
-}
+} // end struct orderedMap
 
 type orderedEntry[Value any] struct {
 	key   string
 	value Value
-}
+} // end struct orderedEntry
 
 func (entries *orderedMap[Value]) set(key string, value Value) {
 	if element, exists := entries.elements[key]; exists {
@@ -465,7 +522,7 @@ func (entries *orderedMap[Value]) set(key string, value Value) {
 	}
 
 	entries.elements[key] = entries.order.PushBack(orderedEntry[Value]{key, value})
-}
+} // end method set
 
 func (entries *orderedMap[Value]) get(key string) (Value, bool) {
 	element, exists := entries.elements[key]
@@ -477,14 +534,14 @@ func (entries *orderedMap[Value]) get(key string) (Value, bool) {
 	}
 
 	return element.Value.(orderedEntry[Value]).value, true
-}
+} // end method get
 
 func (entries *orderedMap[Value]) remove(key string) {
 	if element, exists := entries.elements[key]; exists {
 		entries.order.Remove(element)
 		delete(entries.elements, key)
 	}
-}
+} // end method remove
 
 // each visits the entries in order until visit returns false.
 func (entries *orderedMap[Value]) each(visit func(key string, value Value) bool) {
@@ -495,7 +552,7 @@ func (entries *orderedMap[Value]) each(visit func(key string, value Value) bool)
 			return
 		}
 	}
-}
+} // end method each
 
 func (entries *orderedMap[Value]) keys() []string {
 	keys := make([]string, 0, len(entries.elements))
@@ -506,13 +563,13 @@ func (entries *orderedMap[Value]) keys() []string {
 	})
 
 	return keys
-}
+} // end method keys
 
 func (entries *orderedMap[Value]) length() int {
 	return len(entries.elements)
-}
+} // end method length
 
 func (entries *orderedMap[Value]) clear() {
 	entries.order.Init()
 	entries.elements = nil
-}
+} // end method clear

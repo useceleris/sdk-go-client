@@ -57,7 +57,7 @@ const (
 // like any sentinel error.
 func (code ErrorCode) Error() string {
 	return string(code)
-}
+} // end method Error
 
 // Error is a failure the SDK detected. Its message names what failed and the
 // rule or limit it broke; it never carries input values, credentials, or bytes
@@ -71,23 +71,23 @@ type Error struct {
 	// only when Code is ErrProtocol.
 	Field  string
 	Offset int
-}
+} // end struct Error
 
-func (e *Error) Error() string {
-	if e.Code != ErrProtocol {
-		return e.Message
+func (sdkError *Error) Error() string {
+	if sdkError.Code != ErrProtocol {
+		return sdkError.Message
 	}
 
-	return e.Message + " Field: " + e.Field + ", byte offset " + strconv.Itoa(e.Offset) + "."
-}
+	return sdkError.Message + " Field: " + sdkError.Field + ", byte offset " + strconv.Itoa(sdkError.Offset) + "."
+} // end method Error
 
 // Is reports whether target is this error's code, so errors.Is(err,
 // celeris.ErrTimeout) matches every timeout.
-func (e *Error) Is(target error) bool {
+func (sdkError *Error) Is(target error) bool {
 	code, ok := target.(ErrorCode)
 
-	return ok && code == e.Code
-}
+	return ok && code == sdkError.Code
+} // end method Is
 
 // ServerErrorType is the kind of an error frame the server sent. The set stays
 // open: a type a newer server adds still reaches the caller unchanged (ERR-01).
@@ -122,25 +122,25 @@ type ServerError struct {
 	// segment a denial refers to: nil, a string, an int32, an int64, or a
 	// []any of these.
 	Resource any
-}
+} // end struct ServerError
 
-func (e *ServerError) Error() string {
-	return string(e.Type) + ": " + e.Message
-}
+func (serverError *ServerError) Error() string {
+	return string(serverError.Type) + ": " + serverError.Message
+} // end method Error
 
 func newError(code ErrorCode, message string) *Error {
 	return &Error{Code: code, Message: message}
-}
+} // end function newError
 
 func protocolError(message, field string, offset int) *Error {
 	return &Error{Code: ErrProtocol, Message: message, Field: field, Offset: offset}
-}
+} // end function protocolError
 
 // configurationError names every field that failed and the rule it broke,
 // never the value: "Invalid client options. CredentialProvider: Required."
 func configurationError(subject string, failures ...string) *Error {
 	return newError(ErrConfiguration, "Invalid "+subject+". "+strings.Join(failures, " "))
-}
+} // end function configurationError
 
 // failure describes one failed field; an empty path describes the value as a
 // whole.
@@ -150,4 +150,4 @@ func failure(path, rule string) string {
 	}
 
 	return path + ": " + rule + "."
-}
+} // end function failure

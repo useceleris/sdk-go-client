@@ -11,7 +11,7 @@ func retryDelay(retryIndex int, random func() float64) time.Duration {
 	}
 
 	return time.Duration(random() * float64(ceiling))
-}
+} // end function retryDelay
 
 // replayLookback is the outage so far, rounded up to whole milliseconds, plus
 // five seconds of overlap, capped at the server's largest lookback.
@@ -23,4 +23,4 @@ func replayLookback(outage time.Duration) time.Duration {
 	}
 
 	return min(lookback+replayOverlap, replayLookbackCap)
-}
+} // end function replayLookback

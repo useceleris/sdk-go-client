@@ -19,8 +19,9 @@ const (
 	// empty writer and anything behind it waits for room.
 	maximumBufferedBytes = maximumCommandBytes
 
-	// Bounds the writer, the publishes waiting for it, and the publishes kept
-	// for a rate-limit resend.
+	// Bounds the writer and the publishes kept for a rate-limit resend, and
+	// is the default bound on the publishes waiting for the writer
+	// (PublishQueueSize).
 	maximumPendingCommands = 64
 
 	// Outbound recovery (RESEND-01). A rate limit is reported without saying
@@ -86,6 +87,10 @@ const (
 
 	defaultPresenceQueryTimeout = 10 * time.Second
 
+	// The longest timeout an option accepts (CONFIG-01). Every SDK shares it,
+	// and it stays below the largest delay a JavaScript timer can count.
+	maximumTimeout = 15 * time.Minute
+
 	defaultSegmentID = "default"
 
 	// The longest channel reference the server accepts.
@@ -94,8 +99,12 @@ const (
 	// The command a presence query error names as its sub type (QUERY-01).
 	presenceListCommand = "PRES_LIST"
 
-	// Recovery.
+	// Recovery. The default MaximumReconnectAttempts.
 	maximumRetries = 10
+
+	// The largest MaximumReconnectAttempts an option accepts (CONFIG-01), so a
+	// channel that cannot reconnect reaches failed in a known time.
+	maximumRetriesCeiling = 100
 
 	retryBudgetReset = time.Minute
 
@@ -116,14 +125,28 @@ const (
 
 	closeBudget = 5 * time.Second
 
-	// TCP keepalive on every socket: probes start after 15 seconds of silence
-	// and three unanswered probes, five seconds apart, fail it, so a silently
-	// dead path is noticed after about 30 seconds.
+	// TCP keepalive on every socket, a backstop to the heartbeat: probes start
+	// after 15 seconds of silence and three unanswered probes, five seconds
+	// apart, fail it.
 	keepAliveIdle = 15 * time.Second
 
 	keepAliveInterval = 5 * time.Second
 
 	keepAliveCount = 3
 
+	// The server pings every 30 seconds and closes a connection from which it
+	// has received no ping or pong for 60 seconds; data frames do not count
+	// (HEARTBEAT-01). The client answers its pings only while the channel
+	// reads, so it pings on its own this often: every 60-second window holds
+	// at least two pings, so one can fail to go out.
+	heartbeatInterval = 20 * time.Second
+
+	// A ping unanswered for this much reading time means the path is dead
+	// (HEARTBEAT-01), so a dead path is noticed within about 35 seconds on any
+	// system. Pongs arrive only while the channel reads, so time a listener
+	// holds the receiver never counts.
+	heartbeatTimeout = 15 * time.Second
+
+	// The default deduplication window (DeduplicationWindowSize).
 	deduplicationWindowSize = 1024
 )

@@ -23,13 +23,13 @@ func decodeServerMessage(data []byte) (serverMessage, error) {
 	}
 
 	return message, nil
-}
+} // end function decodeServerMessage
 
 type messageDecoder struct {
 	data      []byte
 	offset    int
 	fragments int
-}
+} // end struct messageDecoder
 
 func (decoder *messageDecoder) readMarker(field string) (byte, error) {
 	fieldStartOffset := decoder.offset
@@ -46,7 +46,7 @@ func (decoder *messageDecoder) readMarker(field string) (byte, error) {
 	decoder.offset++
 
 	return decoder.data[fieldStartOffset], nil
-}
+} // end method readMarker
 
 // readLine reads up to LF, allowing one CR before it, and returns the content
 // between. The scan never runs past the content limit, one CR and the LF.
@@ -75,12 +75,12 @@ func (decoder *messageDecoder) readLine(field string, fieldStartOffset, maximumL
 	}
 
 	return decoder.data[lineStart:contentEnd], nil
-}
+} // end method readLine
 
 // readUnboundedLine reads a simple string, bounded only by the message.
 func (decoder *messageDecoder) readUnboundedLine(field string, fieldStartOffset int) ([]byte, error) {
 	return decoder.readLine(field, fieldStartOffset, len(decoder.data))
-}
+} // end method readUnboundedLine
 
 func readText(data []byte, field string, fieldStartOffset int) (string, error) {
 	if !utf8.Valid(data) {
@@ -88,7 +88,7 @@ func readText(data []byte, field string, fieldStartOffset int) (string, error) {
 	}
 
 	return string(data), nil
-}
+} // end function readText
 
 // readDecimal reads the decimal grammar every numeric field shares: an
 // optional minus sign, then digits only. The range defaults to signed 64-bit,
@@ -123,17 +123,17 @@ func (decoder *messageDecoder) readDecimal(field string, fieldStartOffset, maxim
 	}
 
 	return value, nil
-}
+} // end method readDecimal
 
 func (decoder *messageDecoder) readInteger64Digits(field string, fieldStartOffset int) (int64, error) {
 	return decoder.readDecimal(field, fieldStartOffset, maximumInteger64LineBytes, math.MinInt64, math.MaxInt64)
-}
+} // end method readInteger64Digits
 
 func (decoder *messageDecoder) readInteger32Digits(field string, fieldStartOffset int) (int32, error) {
 	value, err := decoder.readDecimal(field, fieldStartOffset, maximumInteger32LineBytes, math.MinInt32, math.MaxInt32)
 
 	return int32(value), err
-}
+} // end method readInteger32Digits
 
 // readTimestamp reads an Integer64, which carries timestamps only.
 func (decoder *messageDecoder) readTimestamp() (int64, error) {
@@ -149,7 +149,7 @@ func (decoder *messageDecoder) readTimestamp() (int64, error) {
 	}
 
 	return decoder.readInteger64Digits("Timestamp", fieldStartOffset)
-}
+} // end method readTimestamp
 
 func (decoder *messageDecoder) readInteger32(field string) (int32, error) {
 	fieldStartOffset := decoder.offset
@@ -164,7 +164,7 @@ func (decoder *messageDecoder) readInteger32(field string) (int32, error) {
 	}
 
 	return decoder.readInteger32Digits(field, fieldStartOffset)
-}
+} // end method readInteger32
 
 // readBytes reads a simple or bulk string; null is reported as nil with ok
 // false.
@@ -186,7 +186,7 @@ func (decoder *messageDecoder) readBytes(field string) (value []byte, ok bool, e
 	default:
 		return nil, false, protocolError("Expected simple or bulk byte marker.", field, fieldStartOffset)
 	}
-}
+} // end method readBytes
 
 func (decoder *messageDecoder) readBulkBytes(field string, fieldStartOffset int) (value []byte, ok bool, err error) {
 	length, err := decoder.readInteger64Digits(field, fieldStartOffset)
@@ -222,7 +222,7 @@ func (decoder *messageDecoder) readBulkBytes(field string, fieldStartOffset int)
 	decoder.offset++
 
 	return value, true, nil
-}
+} // end method readBulkBytes
 
 func (decoder *messageDecoder) readIdentifier(field string) (string, error) {
 	fieldStartOffset := decoder.offset
@@ -237,7 +237,7 @@ func (decoder *messageDecoder) readIdentifier(field string) (string, error) {
 	}
 
 	return identifier, nil
-}
+} // end method readIdentifier
 
 // readNullableIdentifier returns "" for null.
 func (decoder *messageDecoder) readNullableIdentifier(field string) (string, error) {
@@ -259,7 +259,7 @@ func (decoder *messageDecoder) readNullableIdentifier(field string) (string, err
 	}
 
 	return identifier, nil
-}
+} // end method readNullableIdentifier
 
 // readPayload copies the payload once, so what the caller receives does not
 // share memory with the transport message.
@@ -276,7 +276,7 @@ func (decoder *messageDecoder) readPayload(field string) ([]byte, error) {
 	}
 
 	return bytes.Clone(value), nil
-}
+} // end method readPayload
 
 func (decoder *messageDecoder) readArrayLength(depth int, field string, markerAlreadyRead bool) (int, error) {
 	fieldStartOffset := decoder.offset
@@ -316,7 +316,7 @@ func (decoder *messageDecoder) readArrayLength(depth int, field string, markerAl
 	}
 
 	return int(length), nil
-}
+} // end method readArrayLength
 
 func (decoder *messageDecoder) readConnections(depth int) ([]PresenceConnection, error) {
 	length, err := decoder.readArrayLength(depth, "Connections", false)
@@ -357,7 +357,7 @@ func (decoder *messageDecoder) readConnections(depth int) ([]PresenceConnection,
 	}
 
 	return connections, nil
-}
+} // end method readConnections
 
 func (decoder *messageDecoder) readMessage(depth int, tail bool) (serverMessage, error) {
 	fieldStartOffset := decoder.offset
@@ -377,7 +377,7 @@ func (decoder *messageDecoder) readMessage(depth int, tail bool) (serverMessage,
 	default:
 		return nil, protocolError("Unexpected server message marker.", "Message", fieldStartOffset)
 	}
-}
+} // end method readMessage
 
 func (decoder *messageDecoder) readMessageArray(depth int, tail bool) (serverMessage, error) {
 	length, err := decoder.readArrayLength(depth, "Messages", true)
@@ -399,7 +399,7 @@ func (decoder *messageDecoder) readMessageArray(depth int, tail bool) (serverMes
 	}
 
 	return arrayMessage{messages: messages}, nil
-}
+} // end method readMessageArray
 
 // readErrorMessage reads an error frame. Every field is self-delimiting, so
 // an error may sit anywhere in a batch.
@@ -434,7 +434,7 @@ func (decoder *messageDecoder) readErrorMessage(depth int) (serverMessage, error
 	}
 
 	return message, nil
-}
+} // end method readErrorMessage
 
 func (decoder *messageDecoder) readErrorType() (string, error) {
 	fieldStartOffset := decoder.offset
@@ -449,7 +449,7 @@ func (decoder *messageDecoder) readErrorType() (string, error) {
 	}
 
 	return decoder.readErrorName("ErrorType", fieldStartOffset)
-}
+} // end method readErrorType
 
 // readErrorSubType returns "" for null.
 func (decoder *messageDecoder) readErrorSubType() (string, error) {
@@ -476,7 +476,7 @@ func (decoder *messageDecoder) readErrorSubType() (string, error) {
 	}
 
 	return "", protocolError("Sub type must be a simple string or null.", "ErrorSubType", fieldStartOffset)
-}
+} // end method readErrorSubType
 
 // readErrorName reads an error type or sub type: a bounded name of letters,
 // digits and underscores that starts with a letter, such as
@@ -493,7 +493,7 @@ func (decoder *messageDecoder) readErrorName(field string, fieldStartOffset int)
 	}
 
 	return string(name), nil
-}
+} // end method readErrorName
 
 func validErrorName(name []byte) bool {
 	if len(name) == 0 {
@@ -510,7 +510,7 @@ func validErrorName(name []byte) bool {
 	}
 
 	return true
-}
+} // end function validErrorName
 
 // readResource reads any single fragment an error's type and sub type define:
 // null, a string, an Integer64, an Integer32, or an array of these.
@@ -566,7 +566,7 @@ func (decoder *messageDecoder) readResource(depth int) (any, error) {
 	default:
 		return nil, protocolError("Unexpected resource marker.", "Resource", fieldStartOffset)
 	}
-}
+} // end method readResource
 
 func (decoder *messageDecoder) readCommandMessage(depth int, tail bool) (serverMessage, error) {
 	fieldStartOffset := decoder.offset - 1
@@ -594,7 +594,7 @@ func (decoder *messageDecoder) readCommandMessage(depth int, tail bool) (serverM
 	default:
 		return decoder.skipUnknownCommand(depth, tail, fieldStartOffset)
 	}
-}
+} // end method readCommandMessage
 
 // skipUnknownCommand skips a command this version does not know. It carries an
 // unknown number of fields, so its end is knowable only when it runs to the
@@ -608,7 +608,7 @@ func (decoder *messageDecoder) skipUnknownCommand(depth int, tail bool, fieldSta
 	decoder.offset = len(decoder.data)
 
 	return ignoredMessage{}, nil
-}
+} // end method skipUnknownCommand
 
 func (decoder *messageDecoder) readDelivery() (serverMessage, error) {
 	var message deliveryMessage
@@ -635,7 +635,7 @@ func (decoder *messageDecoder) readDelivery() (serverMessage, error) {
 	}
 
 	return message, nil
-}
+} // end method readDelivery
 
 func (decoder *messageDecoder) readNotice() (serverMessage, error) {
 	var message noticeMessage
@@ -650,7 +650,7 @@ func (decoder *messageDecoder) readNotice() (serverMessage, error) {
 	}
 
 	return message, nil
-}
+} // end method readNotice
 
 func (decoder *messageDecoder) readPresenceNotification() (serverMessage, error) {
 	var message presenceNotifyMessage
@@ -688,7 +688,7 @@ func (decoder *messageDecoder) readPresenceNotification() (serverMessage, error)
 	}
 
 	return message, nil
-}
+} // end method readPresenceNotification
 
 func (decoder *messageDecoder) readPresenceResponse(depth int) (serverMessage, error) {
 	var message presenceListMessage
@@ -724,4 +724,4 @@ func (decoder *messageDecoder) readPresenceResponse(depth int) (serverMessage, e
 	}
 
 	return message, nil
-}
+} // end method readPresenceResponse

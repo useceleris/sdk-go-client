@@ -16,7 +16,7 @@ import (
 // U+FFFD, so the payload is always valid text.
 func TextPayload(text string) []byte {
 	return []byte(strings.ToValidUTF8(text, "�"))
-}
+} // end function TextPayload
 
 // ReadText decodes a UTF-8 payload. It fails with [ErrConfiguration] when the
 // payload is not valid UTF-8.
@@ -26,7 +26,7 @@ func ReadText(payload []byte) (string, error) {
 	}
 
 	return string(payload), nil
-}
+} // end function ReadText
 
 // JSONPayload encodes value as JSON with encoding/json, without escaping HTML
 // characters. It fails with [ErrConfiguration] when value cannot be encoded,
@@ -42,7 +42,7 @@ func JSONPayload(value any) ([]byte, error) {
 	}
 
 	return bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}), nil
-}
+} // end function JSONPayload
 
 // ReadJSON decodes a JSON payload into a T. The type is an assertion, not a
 // validation: check payloads from peers you do not control against a schema.
@@ -66,7 +66,7 @@ func ReadJSON[T any](payload []byte) (T, error) {
 	}
 
 	return value, nil
-}
+} // end function ReadJSON
 
 // PayloadCodec gives a serializer of your choice, such as protobuf or
 // MessagePack, the same shape as the built-in helpers. Create one with
@@ -74,7 +74,7 @@ func ReadJSON[T any](payload []byte) (T, error) {
 type PayloadCodec[T any] struct {
 	encode func(T) ([]byte, error)
 	decode func([]byte) (T, error)
-}
+} // end struct PayloadCodec
 
 // NewPayloadCodec wraps an encoder and decoder pair. It fails with
 // [ErrConfiguration] when either is nil.
@@ -84,16 +84,16 @@ func NewPayloadCodec[T any](encode func(T) ([]byte, error), decode func([]byte) 
 	}
 
 	return PayloadCodec[T]{encode: encode, decode: decode}, nil
-}
+} // end function NewPayloadCodec
 
 // EncodePayload encodes value with the codec's encoder. The encoder's own
 // errors are returned unchanged: they are the caller's, not this package's.
 func (codec PayloadCodec[T]) EncodePayload(value T) ([]byte, error) {
 	return codec.encode(value)
-}
+} // end method EncodePayload
 
 // ReadPayload decodes payload with the codec's decoder. The decoder's own
 // errors are returned unchanged.
 func (codec PayloadCodec[T]) ReadPayload(payload []byte) (T, error) {
 	return codec.decode(payload)
-}
+} // end method ReadPayload

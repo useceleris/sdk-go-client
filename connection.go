@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -18,12 +19,16 @@ type socket interface {
 
 	write(ctx context.Context, data []byte) error
 
+	// ping sends a ping frame, then waits for its pong until ctx ends. A pong
+	// that never arrives fails only the call, never the socket.
+	ping(ctx context.Context) error
+
 	// close performs the closing handshake. The caller bounds how long it may
 	// take.
 	close() error
 
 	closeNow() error
-}
+} // end interface socket
 
 // dialer opens a socket to url, which carries the credentials.
 type dialer func(ctx context.Context, url string) (socket, error)
@@ -46,18 +51,18 @@ func dialWebSocket() dialer {
 
 		return webSocket{conn: conn}, nil
 	}
-}
+} // end function dialWebSocket
 
 // httpTransport is the package's own, so changes an application makes to
 // http.DefaultTransport, such as skipping certificate verification, cannot
 // weaken a connection (SEC-02). Setting its dialer also turns off automatic
 // HTTP/2, which a WebSocket upgrade never uses.
 //
-// The dialer probes an idle socket, so a silently dead path, such as a
-// dropped NAT mapping, fails it and starts recovery. The kernel sends and
-// answers the probes, so they keep working while a listener holds the receive
-// goroutine. WebSocket pings would not: the library reads pongs only while the
-// channel reads, so a slow listener would look like a dead connection.
+// The dialer also probes an idle socket, a backstop to the heartbeat for a
+// silently dead path, such as a dropped NAT mapping: the kernel sends and
+// answers the probes whatever the listeners do. Linux probes only while
+// nothing written awaits acknowledgement, which the heartbeat's pings rarely
+// leave it.
 func httpTransport() *http.Transport {
 	dialer := &net.Dialer{KeepAliveConfig: net.KeepAliveConfig{
 		Enable:   true,
@@ -67,29 +72,36 @@ func httpTransport() *http.Transport {
 	}}
 
 	return &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: dialer.DialContext}
-}
+} // end function httpTransport
 
 type webSocket struct {
 	conn *websocket.Conn
-}
+} // end struct webSocket
 
 func (socket webSocket) read(ctx context.Context) (bool, []byte, error) {
 	messageType, data, err := socket.conn.Read(ctx)
 
 	return messageType == websocket.MessageBinary, data, err
-}
+} // end method read
 
 func (socket webSocket) write(ctx context.Context, data []byte) error {
 	return socket.conn.Write(ctx, websocket.MessageBinary, data)
-}
+} // end method write
+
+// The library's Ping closes the socket only when writing the ping frame takes
+// longer than five seconds; a context ending while it waits for the pong ends
+// the wait alone.
+func (socket webSocket) ping(ctx context.Context) error {
+	return socket.conn.Ping(ctx)
+} // end method ping
 
 func (socket webSocket) close() error {
 	return socket.conn.Close(websocket.StatusNormalClosure, "")
-}
+} // end method close
 
 func (socket webSocket) closeNow() error {
 	return socket.conn.CloseNow()
-}
+} // end method closeNow
 
 // outboundFrame is one command handed to the writer.
 type outboundFrame struct {
@@ -97,11 +109,12 @@ type outboundFrame struct {
 
 	// Set for a publish, which settles once written.
 	publish *queuedPublish
-}
+} // end struct outboundFrame
 
 // connection is one socket and the goroutines that drive it: a writer that
-// writes handed-off frames in order, and a receiver that routes what arrives.
-// Its fields are guarded by the channel's mutex.
+// writes handed-off frames in order, a receiver that routes what arrives, and
+// a heartbeat that pings the server and finds a dead path. Its fields are
+// guarded by the channel's mutex.
 type connection struct {
 	channel *Channel
 	socket  socket
@@ -126,7 +139,23 @@ type connection struct {
 	broken  bool
 
 	writerDone chan struct{}
-}
+
+	// Reading time: how long the receiver has waited in read, the only time a
+	// pong or a message can arrive. It is the finished reads' total, plus the
+	// current read's time since readingSince.
+	readingTime  time.Duration
+	reading      bool
+	readingSince time.Time
+
+	// Whether a ping awaits its pong, and the reading time when the oldest
+	// such ping was sent.
+	pingUnanswered  bool
+	unansweredSince time.Duration
+
+	// When the server was last heard from: the socket opening, a pong or a
+	// received message.
+	lastHeard time.Time
+} // end struct connection
 
 func newConnection(channel *Channel, socket socket) *connection {
 	connectionContext, cancel := context.WithCancel(context.Background())
@@ -138,18 +167,19 @@ func newConnection(channel *Channel, socket socket) *connection {
 		cancel:     cancel,
 		ready:      sync.NewCond(&channel.mutex),
 		writerDone: make(chan struct{}),
+		lastHeard:  time.Now(),
 	}
-}
+} // end function newConnection
 
 func (connection *connection) hasRoom(size int) bool {
 	return len(connection.outbound) < maximumPendingCommands && connection.outboundBytes+size <= maximumBufferedBytes
-}
+} // end method hasRoom
 
 func (connection *connection) handOff(frame *outboundFrame) {
 	connection.outbound = append(connection.outbound, frame)
 	connection.outboundBytes += len(frame.data)
 	connection.ready.Signal()
-}
+} // end method handOff
 
 // remove takes back every frame of publish the writer has not started, and
 // reports whether there was one. A rate limit can requeue a publish still in
@@ -168,18 +198,17 @@ func (connection *connection) remove(publish *queuedPublish) bool {
 	})
 
 	return len(connection.outbound) < before
-}
+} // end method remove
 
 // abandon stops the connection without a closing handshake. The caller holds
-// the mutex and has detached the connection; publishes not yet written fail
-// with err.
-func (connection *connection) abandon(err error) {
+// the mutex, has detached the connection, and has taken back or failed the
+// publishes the socket never started writing.
+func (connection *connection) abandon() {
 	if connection.broken {
 		return
 	}
 
 	connection.broken = true
-	connection.failUnwritten(err)
 	connection.ready.Broadcast()
 
 	// Cancelling the read and write context first makes the library drop a
@@ -188,7 +217,7 @@ func (connection *connection) abandon(err error) {
 		connection.cancel()
 		_ = connection.socket.closeNow()
 	}()
-}
+} // end method abandon
 
 // failUnwritten fails every publish handed to this connection that the socket
 // never started writing.
@@ -199,6 +228,38 @@ func (connection *connection) failUnwritten(err error) {
 		}
 	}
 
+	connection.dropUnwritten()
+} // end method failUnwritten
+
+// takeUnwritten takes back, unsettled and in order, every publish handed to
+// this connection that the socket never started writing, so recovery can
+// queue it for the next socket (QUEUE-01). A rate limit can requeue a publish
+// still in the writer, so it may appear twice; it is taken once. A publish
+// already written, or being written, keeps that outcome: only a rate limit
+// resends.
+func (connection *connection) takeUnwritten() []*queuedPublish {
+	var publishes []*queuedPublish
+
+	for _, frame := range connection.outbound {
+		publish := frame.publish
+		beingWritten := connection.writing != nil && connection.writing.publish == publish
+
+		if publish == nil || publish.settled || beingWritten || slices.Contains(publishes, publish) {
+			continue
+		}
+
+		publish.connection = nil
+		publishes = append(publishes, publish)
+	}
+
+	connection.dropUnwritten()
+
+	return publishes
+} // end method takeUnwritten
+
+// dropUnwritten empties the writer except for the frame the socket is
+// writing.
+func (connection *connection) dropUnwritten() {
 	if connection.writing != nil {
 		connection.outbound = []*outboundFrame{connection.writing}
 		connection.outboundBytes = len(connection.writing.data)
@@ -206,7 +267,7 @@ func (connection *connection) failUnwritten(err error) {
 		connection.outbound = nil
 		connection.outboundBytes = 0
 	}
-}
+} // end method dropUnwritten
 
 // writeLoop writes handed-off frames in order until the connection breaks, or
 // until it closes and every frame is flushed.
@@ -254,13 +315,11 @@ func (connection *connection) writeLoop() {
 			// connection unknown, so the socket is replaced and reconnecting
 			// restores every subscription (RESEND-01).
 			queued := channel.receiveSocketFailure(connection)
-			lost := errConnectionLost()
 
-			if connection.closing {
-				lost = errClosedBeforeSent()
-			}
-
-			connection.abandon(lost)
+			// Recovery took back what this socket never wrote; otherwise Close
+			// detached it while flushing, so what it never wrote is cancelled.
+			connection.failUnwritten(errClosedBeforeSent())
+			connection.abandon()
 			channel.mutex.Unlock()
 
 			if queued {
@@ -282,4 +341,4 @@ func (connection *connection) writeLoop() {
 
 		channel.mutex.Unlock()
 	}
-}
+} // end method writeLoop

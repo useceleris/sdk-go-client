@@ -46,7 +46,7 @@ func encodePublish(segmentID, messageID string, payload []byte) ([]byte, error) 
 	}
 
 	return appendBulk(command, payload), nil
-}
+} // end function encodePublish
 
 // encodeSegmentCommand encodes SUB, UNSUB, PRES_SUB or PRES_UNSUB.
 func encodeSegmentCommand(name, segmentID string) ([]byte, error) {
@@ -72,7 +72,7 @@ func encodeSegmentCommand(name, segmentID string) ([]byte, error) {
 	command = append(command, '\n')
 
 	return appendBulk(command, segmentID), nil
-}
+} // end function encodeSegmentCommand
 
 // encodePresenceList encodes PRES_LIST with the query's request id
 // (QUERY-01).
@@ -120,12 +120,12 @@ func encodePresenceList(segmentID string, page, perPage int32, requestID string)
 	command = append(command, '\n')
 
 	return appendBulk(command, requestID), nil
-}
+} // end function encodePresenceList
 
 // bulkSize is the encoded size of a bulk string of the given length.
 func bulkSize(length int) int {
 	return len("$\n\n") + len(strconv.Itoa(length)) + length
-}
+} // end function bulkSize
 
 func appendBulk[Bytes string | []byte](command []byte, value Bytes) []byte {
 	command = append(command, '$')
@@ -134,4 +134,4 @@ func appendBulk[Bytes string | []byte](command []byte, value Bytes) []byte {
 	command = append(command, value...)
 
 	return append(command, '\n')
-}
+} // end function appendBulk

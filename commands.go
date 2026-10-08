@@ -27,7 +27,7 @@ func identifierRule(identifier string) string {
 	}
 
 	return ""
-}
+} // end function identifierRule
 
 // channelReferenceRule returns the rule a channel reference breaks, or "".
 func channelReferenceRule(reference string) string {
@@ -50,4 +50,4 @@ func channelReferenceRule(reference string) string {
 	}
 
 	return ""
-}
+} // end function channelReferenceRule

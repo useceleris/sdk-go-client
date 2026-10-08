@@ -81,28 +81,29 @@ type Channel struct {
 	presenceRequestCount uint64
 	pendingPresence      *presenceQuery
 
-	messageListeners  map[string]*listenerSet[func([]byte, MessageMetadata)]
-	presenceListeners map[string]*listenerSet[func(PresenceEvent)]
-	stateListeners    listenerSet[func(ChannelState)]
-	recoveryListeners listenerSet[func(RecoveryEvent)]
-	noticeListeners   listenerSet[func(ServerNotice)]
-	errorListeners    listenerSet[func(error)]
+	messageListeners        map[string]*listenerSet[func([]byte, MessageMetadata)]
+	presenceListeners       map[string]*listenerSet[func(PresenceEvent)]
+	channelMessageListeners listenerSet[func([]byte, MessageMetadata)]
+	stateListeners          listenerSet[func(ChannelState)]
+	recoveryListeners       listenerSet[func(RecoveryEvent)]
+	noticeListeners         listenerSet[func(ServerNotice)]
+	errorListeners          listenerSet[func(error)]
 
 	events   []func() func()
 	draining bool
 	idle     *sync.Cond
-}
+} // end struct Channel
 
 type presenceQuery struct {
 	requestID string
 	result    chan presenceResult
 	timer     *time.Timer
-}
+} // end struct presenceQuery
 
 type presenceResult struct {
 	page PresencePage
 	err  error
-}
+} // end struct presenceResult
 
 func newChannel(client *Client, reference string) *Channel {
 	channel := &Channel{
@@ -118,7 +119,7 @@ func newChannel(client *Client, reference string) *Channel {
 	channel.idle = sync.NewCond(&channel.mutex)
 
 	return channel
-}
+} // end function newChannel
 
 // State returns the current state. It may change as soon as it is read.
 func (channel *Channel) State() ChannelState {
@@ -126,12 +127,12 @@ func (channel *Channel) State() ChannelState {
 	defer channel.mutex.Unlock()
 
 	return channel.state
-}
+} // end method State
 
 // Events returns the handler for channel-wide listeners.
 func (channel *Channel) Events() ChannelEventHandler {
 	return ChannelEventHandler{channel: channel}
-}
+} // end method Events
 
 // Segment returns a handle for the segment with the given id. It does no
 // network work, and any number of handles for one segment share its
@@ -143,13 +144,13 @@ func (channel *Channel) Segment(segmentID string) (*Segment, error) {
 	}
 
 	return &Segment{channel: channel, id: segmentID}, nil
-}
+} // end method Segment
 
 // DefaultSegment returns a handle for the segment every connection joins
 // automatically (SEG-01).
 func (channel *Channel) DefaultSegment() *Segment {
 	return &Segment{channel: channel, id: defaultSegmentID}
-}
+} // end method DefaultSegment
 
 // Connect opens the connection. It returns once the WebSocket is established
 // and held subscriptions are queued to be restored ahead of any publish, or
@@ -200,7 +201,7 @@ func (channel *Channel) Connect(ctx context.Context) error {
 	channel.dispatchEvents()
 
 	return err
-}
+} // end method Connect
 
 // Close closes the connection and every segment handle with it. It is
 // terminal and idempotent, and returns within about five seconds even when
@@ -252,7 +253,8 @@ func (channel *Channel) Close() {
 		case <-connection.writerDone:
 		case <-budget.C:
 			channel.mutex.Lock()
-			connection.abandon(cancelled)
+			connection.failUnwritten(cancelled)
+			connection.abandon()
 			channel.mutex.Unlock()
 		}
 
@@ -264,17 +266,23 @@ func (channel *Channel) Close() {
 	close(channel.closed)
 	channel.mutex.Unlock()
 	channel.dispatchEvents()
-}
+} // end method Close
 
 // establishConnection runs one attempt: fresh credentials, the handshake,
 // then installing the socket. On success the channel is connected and, for a
 // reconnect, the recovery event is queued, all before any received message is
 // routed.
 func (channel *Channel) establishConnection(parent context.Context, generation uint64, reconnect *CredentialRequest, retryIndex int) error {
+	timeout := channel.client.connectTimeout
+
+	if reconnect != nil {
+		timeout = channel.client.reconnectTimeout
+	}
+
 	// Deriving from the caller's context runs its code, so it happens outside
 	// the mutex.
 	attemptContext, cancelAttempt := context.WithCancelCause(parent)
-	attemptContext, cancelTimeout := context.WithTimeoutCause(attemptContext, channel.client.connectTimeout, errAttemptTimedOut)
+	attemptContext, cancelTimeout := context.WithTimeoutCause(attemptContext, timeout, errAttemptTimedOut)
 
 	defer cancelTimeout()
 	defer cancelAttempt(nil)
@@ -296,7 +304,7 @@ func (channel *Channel) establishConnection(parent context.Context, generation u
 		request = *reconnect
 	}
 
-	socket, err := channel.openSocket(attemptContext, request)
+	socket, err := channel.openSocket(attemptContext, request, timeout)
 
 	channel.mutex.Lock()
 	defer channel.mutex.Unlock()
@@ -304,9 +312,6 @@ func (channel *Channel) establishConnection(parent context.Context, generation u
 	channel.attemptCancel = nil
 
 	if err != nil {
-		// A failed attempt leaves nothing queued for the next socket.
-		channel.queue.reset(errConnectionLost())
-
 		return err
 	}
 
@@ -322,16 +327,8 @@ func (channel *Channel) establishConnection(parent context.Context, generation u
 	channel.disconnectedAt = time.Time{}
 
 	// Restoration goes through the queue, so it waits for writer room and
-	// always reaches the server before any publish: messages first, then
-	// presence, each in registration order.
-	for _, segmentID := range channel.messageInterests.keys() {
-		channel.queue.queueInterest(messageInterest, segmentID)
-	}
-
-	for _, segmentID := range channel.presenceInterests.keys() {
-		channel.queue.queueInterest(presenceInterest, segmentID)
-	}
-
+	// reaches the server before the publishes that waited for this socket.
+	channel.queue.restore()
 	channel.queueStateChange(StateConnected)
 
 	if reconnect != nil {
@@ -341,14 +338,15 @@ func (channel *Channel) establishConnection(parent context.Context, generation u
 
 	go connection.writeLoop()
 	go channel.receive(connection)
+	go connection.heartbeat()
 
 	return nil
-}
+} // end method establishConnection
 
 // openSocket acquires credentials and performs the handshake. Every failure
 // maps to fixed text: a provider's error and the dialer's error, which quotes
 // the credential URL, are never passed on.
-func (channel *Channel) openSocket(ctx context.Context, request CredentialRequest) (socket, error) {
+func (channel *Channel) openSocket(ctx context.Context, request CredentialRequest, timeout time.Duration) (socket, error) {
 	type providerResult struct {
 		credentials Credentials
 		err         error
@@ -356,7 +354,7 @@ func (channel *Channel) openSocket(ctx context.Context, request CredentialReques
 
 	// A context already done never reaches the provider.
 	if ctx.Err() != nil {
-		return nil, attemptError(ctx, channel.client.connectTimeout)
+		return nil, attemptError(ctx, timeout)
 	}
 
 	results := make(chan providerResult, 1)
@@ -378,12 +376,12 @@ func (channel *Channel) openSocket(ctx context.Context, request CredentialReques
 	// deadline, and what it returns afterwards is discarded.
 	select {
 	case <-ctx.Done():
-		return nil, attemptError(ctx, channel.client.connectTimeout)
+		return nil, attemptError(ctx, timeout)
 	case result = <-results:
 	}
 
 	if ctx.Err() != nil {
-		return nil, attemptError(ctx, channel.client.connectTimeout)
+		return nil, attemptError(ctx, timeout)
 	}
 
 	if result.err != nil {
@@ -398,14 +396,14 @@ func (channel *Channel) openSocket(ctx context.Context, request CredentialReques
 
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, attemptError(ctx, channel.client.connectTimeout)
+			return nil, attemptError(ctx, timeout)
 		}
 
 		return nil, newError(ErrTransport, "WebSocket handshake failed: the server refused the connection or could not be reached. Check the base URL, the credentials and the channel reference.")
 	}
 
 	return connectionSocket, nil
-}
+} // end method openSocket
 
 var errProviderPanicked = errors.New("credential provider panicked")
 
@@ -422,7 +420,7 @@ func attemptError(ctx context.Context, timeout time.Duration) error {
 	default:
 		return newError(ErrCancelled, "Connection attempt cancelled by its context.")
 	}
-}
+} // end function attemptError
 
 // receive routes what arrives on one socket until it fails or is detached.
 func (channel *Channel) receive(connection *connection) {
@@ -449,10 +447,16 @@ func (channel *Channel) receive(connection *connection) {
 	}()
 
 	for {
+		channel.mutex.Lock()
+		connection.startReading()
+		channel.mutex.Unlock()
+
 		binary, data, err := connection.socket.read(connection.context)
 
+		channel.mutex.Lock()
+		connection.stopReading(err == nil)
+
 		if err != nil {
-			channel.mutex.Lock()
 			queued := channel.receiveSocketFailure(connection)
 			channel.mutex.Unlock()
 			finished = true
@@ -465,6 +469,8 @@ func (channel *Channel) receive(connection *connection) {
 
 			return
 		}
+
+		channel.mutex.Unlock()
 
 		// A message that cannot be decoded costs exactly that message:
 		// decoding never spans messages, so the next one is unaffected and the
@@ -487,15 +493,15 @@ func (channel *Channel) receive(connection *connection) {
 			return
 		}
 	}
-}
+} // end method receive
 
 // decodeFailure carries a decoding failure through routing, so it is reported
 // in order with everything else.
 type decodeFailure struct {
 	err error
-}
+} // end struct decodeFailure
 
-func (decodeFailure) isServerMessage() {}
+func (decodeFailure) isServerMessage() {} // end method isServerMessage
 
 // route delivers one decoded message, entry by entry for a batch, waiting
 // before each until no listener is running. It reports false once the
@@ -528,7 +534,7 @@ func (channel *Channel) route(connection *connection, message serverMessage) boo
 	channel.dispatchEvents()
 
 	return true
-}
+} // end method route
 
 func (channel *Channel) routeEntry(message serverMessage) {
 	switch message := message.(type) {
@@ -546,7 +552,7 @@ func (channel *Channel) routeEntry(message serverMessage) {
 	case decodeFailure:
 		channel.queueError(message.err)
 	}
-}
+} // end method routeEntry
 
 func (channel *Channel) deliver(message deliveryMessage) {
 	// Every delivery carries an id, the publisher's or one the server assigns
@@ -560,13 +566,7 @@ func (channel *Channel) deliver(message deliveryMessage) {
 	}
 
 	// Ids are recorded before fanout, even with no listeners.
-	if !channel.deduplication.recordIfNew(message.messageID) {
-		return
-	}
-
-	listeners := channel.messageListeners[message.segmentID]
-
-	if listeners == nil {
+	if !channel.deduplication.recordIfNew(message.messageID, channel.client.deduplicationWindowSize) {
 		return
 	}
 
@@ -577,8 +577,18 @@ func (channel *Channel) deliver(message deliveryMessage) {
 		Timestamp:      message.timestamp,
 	}
 
-	channel.queueEvent(listeners, func(listener func([]byte, MessageMetadata)) { listener(message.payload, metadata) }, true)
-}
+	invoke := func(listener func([]byte, MessageMetadata)) { listener(message.payload, metadata) }
+
+	// The segment's listeners first, then the channel's (MSG-02).
+	if listeners := channel.messageListeners[message.segmentID]; listeners != nil {
+		channel.queueEvent(listeners, invoke, true)
+	}
+
+	// Queued even with no channel listeners: a listener set is snapshotted
+	// when its event's turn comes, so a channel listener a segment listener
+	// registers mid-delivery still receives this message, as in the reference.
+	channel.queueEvent(&channel.channelMessageListeners, invoke, true)
+} // end method deliver
 
 func (channel *Channel) deliverPresence(message presenceNotifyMessage) {
 	listeners := channel.presenceListeners[message.segmentID]
@@ -596,7 +606,7 @@ func (channel *Channel) deliverPresence(message presenceNotifyMessage) {
 	}
 
 	channel.queueEvent(listeners, func(listener func(PresenceEvent)) { listener(event) }, true)
-}
+} // end method deliverPresence
 
 // receiveServerError reports an error frame once, every field as sent, and
 // leaves the connection up (ERR-01).
@@ -624,7 +634,7 @@ func (channel *Channel) receiveServerError(message errorMessage) {
 	}
 
 	channel.queueError(serverError)
-}
+} // end method receiveServerError
 
 func (channel *Channel) receivePresenceResponse(message presenceListMessage) {
 	pending := channel.pendingPresence
@@ -645,7 +655,7 @@ func (channel *Channel) receivePresenceResponse(message presenceListMessage) {
 		To:          message.to,
 		Connections: message.connections,
 	}}
-}
+} // end method receivePresenceResponse
 
 func (channel *Channel) takePendingPresence() *presenceQuery {
 	pending := channel.pendingPresence
@@ -656,21 +666,17 @@ func (channel *Channel) takePendingPresence() *presenceQuery {
 	}
 
 	return pending
-}
+} // end method takePendingPresence
 
 func (channel *Channel) rejectPendingPresence(err error) {
 	if pending := channel.takePendingPresence(); pending != nil {
 		pending.result <- presenceResult{err: err}
 	}
-}
-
-func errConnectionLost() error {
-	return newError(ErrNotConnected, "Connection lost before the publish was sent; publish again once the channel reconnects.")
-}
+} // end method rejectPendingPresence
 
 func errClosedBeforeSent() error {
 	return newError(ErrCancelled, "Channel closed before the publish was sent.")
-}
+} // end function errClosedBeforeSent
 
 // receiveSocketFailure starts recovery when the channel's own socket closed
 // or failed, and reports whether that queued events. The caller holds the
@@ -680,14 +686,29 @@ func (channel *Channel) receiveSocketFailure(connection *connection) bool {
 		return false
 	}
 
-	channel.enterReconnecting()
+	channel.enterReconnecting(time.Now())
 
 	return true
-}
+} // end method receiveSocketFailure
 
-func (channel *Channel) enterReconnecting() {
+// heartbeatFailure starts recovery when the heartbeat found the channel's own
+// socket dead, and reports whether that queued events. The outage began when
+// the server was last heard from, so the replay lookback covers what was
+// published during the silence. The caller holds the mutex.
+func (channel *Channel) heartbeatFailure(connection *connection) bool {
+	if channel.connection != connection {
+		return false
+	}
+
+	channel.enterReconnecting(connection.lastHeard)
+
+	return true
+} // end method heartbeatFailure
+
+// enterReconnecting starts recovery from an outage that began at outageStart.
+func (channel *Channel) enterReconnecting(outageStart time.Time) {
 	channel.rejectPendingPresence(newError(ErrTransport, "Connection lost during the presence query; query again once the channel reconnects."))
-	channel.queue.reset(errConnectionLost())
+	channel.queue.dropConnection()
 
 	now := time.Now()
 
@@ -695,12 +716,15 @@ func (channel *Channel) enterReconnecting() {
 		channel.retriesUsed = 0
 	}
 
-	channel.disconnectedAt = now
-	channel.connection.abandon(errConnectionLost())
+	// The monotonic reading is the outage's start; the wall clock moves back
+	// by the same span.
+	channel.disconnectedAt = now.Add(-now.Sub(outageStart))
+	channel.queue.putBack(channel.connection.takeUnwritten())
+	channel.connection.abandon()
 	channel.connection = nil
 	channel.queueStateChange(StateReconnecting)
 	channel.scheduleRetry()
-}
+} // end method enterReconnecting
 
 func (channel *Channel) scheduleRetry() {
 	generation := channel.generation
@@ -723,7 +747,7 @@ func (channel *Channel) scheduleRetry() {
 	})
 
 	channel.retryTimer = timer
-}
+} // end method scheduleRetry
 
 func (channel *Channel) runReconnectAttempt(generation uint64) {
 	channel.mutex.Lock()
@@ -753,7 +777,7 @@ func (channel *Channel) runReconnectAttempt(generation uint64) {
 			if errors.Is(err, ErrTransport) || errors.Is(err, ErrTimeout) {
 				channel.retriesUsed++
 
-				if channel.retriesUsed >= maximumRetries {
+				if channel.retriesUsed >= channel.client.maximumReconnectAttempts {
 					channel.failTerminal(err)
 				} else {
 					channel.scheduleRetry()
@@ -767,16 +791,16 @@ func (channel *Channel) runReconnectAttempt(generation uint64) {
 	}
 
 	channel.dispatchEvents()
-}
+} // end method runReconnectAttempt
 
 func (channel *Channel) failTerminal(err error) {
 	channel.rejectPendingPresence(newError(ErrTransport, "Connection lost during the presence query; query again once the channel reconnects."))
-	channel.queue.reset(errConnectionLost())
+	channel.queue.reset(err)
 	channel.generation++
 	stopTimer(&channel.retryTimer)
 	channel.queueError(err)
 	channel.queueStateChange(StateFailed)
-}
+} // end method failTerminal
 
 // addInterest counts one interest; the first registration and the last
 // cancellation queue a sync of the segment's subscription.
@@ -797,7 +821,7 @@ func (channel *Channel) addInterest(kind interestKind, segmentID string) (*Subsc
 	}
 
 	return &Subscription{channel: channel, kind: kind, segmentID: segmentID}, nil
-}
+} // end method addInterest
 
 func (channel *Channel) releaseInterest(kind interestKind, segmentID string) {
 	interests := channel.interests(kind)
@@ -811,7 +835,7 @@ func (channel *Channel) releaseInterest(kind interestKind, segmentID string) {
 
 	interests.remove(segmentID)
 	channel.queueInterestSync(kind, segmentID)
-}
+} // end method releaseInterest
 
 func (channel *Channel) interests(kind interestKind) *orderedMap[int] {
 	if kind == messageInterest {
@@ -819,15 +843,16 @@ func (channel *Channel) interests(kind interestKind) *orderedMap[int] {
 	}
 
 	return &channel.presenceInterests
-}
+} // end method interests
 
-// queueInterestSync does nothing without a socket: installing one syncs every
-// held interest.
+// queueInterestSync does nothing before the first socket: installing one
+// syncs every held interest. While reconnecting the change waits in the
+// queue, behind the publishes queued before it.
 func (channel *Channel) queueInterestSync(kind interestKind, segmentID string) {
-	if channel.connection != nil {
+	if channel.connection != nil || channel.state == StateReconnecting {
 		channel.queue.queueInterest(kind, segmentID)
 	}
-}
+} // end method queueInterestSync
 
 // interestCommand names the command that brings the server in line with the
 // segment's interest as it stands now, or "" when none is needed.
@@ -848,17 +873,13 @@ func (channel *Channel) interestCommand(kind interestKind, segmentID string) str
 		return ""
 	}
 
+	// Watching presence is not membership, so it never holds the segment.
 	if _, held := channel.messageInterests.get(segmentID); held {
 		return subscribeCommand
 	}
 
-	// A presence subscription keeps the segment joined for messages.
-	if _, held := channel.presenceInterests.get(segmentID); held {
-		return ""
-	}
-
 	return unsubscribeCommand
-}
+} // end method interestCommand
 
 func (channel *Channel) publish(ctx context.Context, segmentID string, payload []byte, messageID string) error {
 	// The context is the caller's code, and encoding copies up to 2 MiB: both
@@ -875,7 +896,11 @@ func (channel *Channel) publish(ctx context.Context, segmentID string, payload [
 
 	channel.mutex.Lock()
 
-	if channel.state != StateConnected || channel.connection == nil {
+	// While reconnecting the publish waits in the queue for the next socket
+	// (QUEUE-01).
+	queueable := channel.state == StateConnected && channel.connection != nil || channel.state == StateReconnecting
+
+	if !queueable {
 		state := channel.state
 		channel.mutex.Unlock()
 
@@ -921,7 +946,7 @@ func (channel *Channel) publish(ctx context.Context, segmentID string, payload [
 	channel.mutex.Unlock()
 
 	return <-publish.result
-}
+} // end method publish
 
 // cancelPublish settles a publish whose context ended. A rate limit can
 // requeue a publish still in the writer, so it may have a copy queued and
@@ -954,7 +979,7 @@ func (channel *Channel) cancelPublish(publish *queuedPublish, cancelled error) {
 	if removed && connection == channel.connection {
 		channel.queue.drain()
 	}
-}
+} // end method cancelPublish
 
 func (channel *Channel) queryPresence(ctx context.Context, segmentID string, page, perPage int32) (PresencePage, error) {
 	contextDone := ctx.Err() != nil
@@ -1031,7 +1056,7 @@ func (channel *Channel) queryPresence(ctx context.Context, segmentID string, pag
 	result := <-pending.result
 
 	return result.page, result.err
-}
+} // end method queryPresence
 
 // contextError reports an operation whose context ended before it completed:
 // a deadline as a timeout, anything else as a cancellation.
@@ -1041,19 +1066,19 @@ func contextError(ctx context.Context, cancelled, timedOut string) error {
 	}
 
 	return newError(ErrCancelled, cancelled)
-}
+} // end function contextError
 
-// deduplicationWindow remembers the last 1024 delivered message ids. It
-// survives reconnects, absorbing replay duplicates, and clears on Connect
-// (REV-01).
+// deduplicationWindow remembers the most recently delivered message ids,
+// DeduplicationWindowSize of them. It survives reconnects, absorbing replay
+// duplicates, and clears on Connect (REV-01).
 type deduplicationWindow struct {
 	identifiers map[string]struct{}
 	order       []string
-}
+} // end struct deduplicationWindow
 
 // recordIfNew returns false for an id already in the window. A new one is
-// recorded, evicting the oldest once the window is full.
-func (window *deduplicationWindow) recordIfNew(identifier string) bool {
+// recorded, evicting the oldest once the window holds limit ids.
+func (window *deduplicationWindow) recordIfNew(identifier string, limit int) bool {
 	if _, seen := window.identifiers[identifier]; seen {
 		return false
 	}
@@ -1065,15 +1090,15 @@ func (window *deduplicationWindow) recordIfNew(identifier string) bool {
 	window.identifiers[identifier] = struct{}{}
 	window.order = append(window.order, identifier)
 
-	if len(window.order) > deduplicationWindowSize {
+	if len(window.order) > limit {
 		delete(window.identifiers, window.order[0])
 		window.order = window.order[1:]
 	}
 
 	return true
-}
+} // end method recordIfNew
 
 func (window *deduplicationWindow) clear() {
 	window.identifiers = nil
 	window.order = nil
-}
+} // end method clear

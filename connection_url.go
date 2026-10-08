@@ -28,7 +28,7 @@ func validateBaseURL(baseURL string, allowInsecureLoopback bool) (*url.URL, erro
 	}
 
 	return parsed, nil
-}
+} // end function validateBaseURL
 
 // isLoopback accepts localhost, ::1 and dotted 127.x.x.x addresses, as the
 // reference does; an IPv4-mapped IPv6 address is not loopback there either.
@@ -40,7 +40,7 @@ func isLoopback(host string) bool {
 	address := net.ParseIP(host)
 
 	return address != nil && !strings.Contains(host, ":") && address.To4()[0] == 127
-}
+} // end function isLoopback
 
 // credentialURL is where one attempt connects. The credentials travel in its
 // query, so it must never reach an error, a log or a caller.
@@ -58,4 +58,4 @@ func credentialURL(baseURL *url.URL, channelReference string, credentials Creden
 	}.Encode()
 
 	return connection.String()
-}
+} // end function credentialURL
