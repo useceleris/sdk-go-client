@@ -25,6 +25,8 @@ Two seams exist, and no others should appear: the unexported `socket` interface 
 
 ## Layout
 
-Leave one blank line after every block (`if`, `for`, `switch`, `select`, `func` literal spanning lines) before the next statement, except before `else` or at the end of an enclosing block. Separate a declaration group from the block that uses it. Code packed against the block before it is harder to read, and is treated as a defect in review.
+Leave one blank line after every block (`if`, `for`, `switch`, `select`, `func` literal spanning lines) before the next statement, except before `else` or at the end of an enclosing block, and one blank line between top-level declarations. Separate a declaration group from the block that uses it. Code packed against the block before it is harder to read, and is treated as a defect in review.
 
-`gofmt` owns everything else about layout; `make check` must pass.
+End every function, method, struct and interface with a marker that names it: `} // end function name`, `} // end method Name`, `} // end struct Name`, `} // end interface Name`. A single-line `struct{}` has no body and takes none.
+
+The tools enforce this. `gofmt` owns layout; golangci-lint runs `wsl_v5` with only its `after-block` check, for the blank line after block statements; and `layout_test.go` parses every Go file in the repository, the live suites and examples included, for the rest: the blank line after a statement that ends a multi-line `func` literal, the blank line between top-level declarations, and the end markers. Each violation fails with its file and line. `make check` must pass.

@@ -61,13 +61,13 @@ func fetchCredentials(ctx context.Context, request celeris.CredentialRequest) (c
 	err = json.NewDecoder(response.Body).Decode(&credentials)
 
 	return credentials, err
-}
+} // end function fetchCredentials
 
 func main() {
 	if err := run(context.Background()); err != nil {
 		log.Fatal(err)
 	}
-}
+} // end function main
 
 func run(ctx context.Context) error {
 	client, err := celeris.NewClient(celeris.ClientOptions{
@@ -150,4 +150,4 @@ func run(ctx context.Context) error {
 	fmt.Printf("example: ok delivered=%d present=%d\n", delivered.Load(), page.Total)
 
 	return nil
-}
+} // end function run

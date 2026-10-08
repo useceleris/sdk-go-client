@@ -98,7 +98,7 @@ func fetchCredentials(ctx context.Context, request celeris.CredentialRequest) (c
 	err = json.NewDecoder(response.Body).Decode(&credentials)
 
 	return credentials, err
-}
+} // end function fetchCredentials
 ```
 
 The provider runs once per connection attempt, reconnects included, and must honour `ctx`: the connect deadline and `Close` both cancel it. On a reconnect, `request.Reconnect` is true and `ReplayLookback` suggests how much history to replay: the outage so far plus five seconds. Your endpoint decides whether to grant it. A provider's error is reported as `ErrTransport`, `ErrTimeout` or `ErrCancelled`, and its text is never passed on. `Credentials` print as redacted through `fmt` and `slog`.
@@ -143,7 +143,28 @@ if err != nil {
 defer subscription.Cancel()
 ```
 
-The payload is the SDK's own copy, shared by every listener of that delivery: treat it as read-only. Each message id is delivered once within a 1024-id window.
+The payload is the SDK's own copy, shared by every listener of that delivery: treat it as read-only. Each message id is delivered once within the deduplication window (`DeduplicationWindowSize`, 1024 ids by default).
+
+The server, not a listener, controls the messages that you receive from a segment:
+
+- When you hold a subscription to a segment, the connection receives the messages of that segment. A listener alone receives no messages.
+- When the connection publishes to a segment, the server also joins the connection to that segment. With read and write access, the connection then receives messages. With write access only, the connection receives no messages. With read access only, the server does not accept the publish. To receive messages, call `Subscribe`.
+- When you cancel the last subscription of a segment, the server removes the connection from the segment. This also stops a join from a publish. A presence subscription does not join or keep a segment.
+- After a reconnect, the SDK subscribes again only to the segments that you hold a subscription for. To continue to receive the messages of a segment after a reconnect, call `Subscribe`.
+- The connection always receives the messages of `"default"`.
+- Listeners and subscriptions are different. When you remove one, the other does not change.
+
+To receive all messages that the connection gets, from all segments, add a channel listener. The segment listeners get each message first, then the channel listeners:
+
+```go
+removeChannelListener := channel.Events().OnMessage(func(payload []byte, metadata celeris.MessageMetadata) {
+	fmt.Println(metadata.SegmentID, string(payload))
+})
+
+defer removeChannelListener()
+```
+
+`removeChannelListener` removes only this channel listener. The other channel listeners and the segment listeners continue to receive messages. Your subscriptions do not change, and the SDK does not send a message to the server. When you call the function again, it has no effect.
 
 ## Publishing
 
@@ -159,15 +180,15 @@ switch {
 case err == nil:
 	fmt.Println("handed to the socket")
 case errors.Is(err, celeris.ErrBackpressure):
-	fmt.Println("64 publishes are waiting; retry later")
+	fmt.Println("the publish queue is full (PublishQueueSize, 64 by default); retry later")
 case errors.Is(err, celeris.ErrDeliveryUnknown):
-	fmt.Println("may or may not have been sent; resend with the same id")
+	fmt.Println("may or may not have been sent; do not resend blindly")
 default:
 	fmt.Println("not sent:", err)
 }
 ```
 
-There is no offline queue: publishing while disconnected returns `ErrNotConnected`. A publish over your plan's payload cap still returns `nil` and is refused afterwards with a `MessageSizeLimitError` through `OnError`. Publishing to a segment joins it server-side.
+While the channel reconnects, `Publish` waits: the publish stays in the publish queue and is sent after the reconnect, once your subscriptions are restored, or fails with the terminal error if recovery ends in `failed`, with `ErrCancelled` if you close the channel, or when its context ends. Before the first connect, while connecting, and once `failed` or closed, `Publish` returns `ErrNotConnected`. A publish over your plan's payload cap still returns `nil` and is refused afterwards with a `MessageSizeLimitError` through `OnError`. Publishing to a segment joins it server-side.
 
 ## Payloads
 
@@ -224,7 +245,7 @@ codec, err := celeris.NewPayloadCodec(
 
 ## Presence
 
-A presence subscription delivers joins and leaves, and also keeps the segment joined for messages:
+A presence subscription delivers joins and leaves. It watches without joining: it delivers no messages, and the watcher is not itself announced or listed. Events and `PresenceList` cover every server node serving the channel.
 
 ```go
 chat.OnPresence(func(event celeris.PresenceEvent) {
@@ -277,7 +298,7 @@ The SDK's own failures are `*celeris.Error` values, matched by code with `errors
 | `ErrCancelled`           | Cancelled by its context or by `Close`                                          |
 | `ErrTransport`           | The provider failed, the handshake was refused, or the socket broke             |
 | `ErrNotConnected`        | The operation needs a connection the channel does not have                      |
-| `ErrBackpressure`        | 64 publishes are waiting, or sending is paused after a rate limit               |
+| `ErrBackpressure`        | the publish queue (`PublishQueueSize`, 64 by default) is full, or sending is paused after a rate limit |
 | `ErrOperationInProgress` | A second `Connect`, or a second presence query, while the first runs            |
 | `ErrDeliveryUnknown`     | A publish that may or may not have left the socket; never resent automatically  |
 | `ErrProtocol`            | A server message could not be decoded; it is dropped and the connection stays up |
@@ -300,7 +321,7 @@ channel.Events().OnError(func(err error) {
 
 ## Reconnection and recovery
 
-A connection that drops is recovered automatically: up to 10 retries with full jitter up to 30 s, each with fresh credentials and a replay lookback covering the outage. The retry budget resets after a connection stays up for 60 s. A silent dead link is noticed after about 30 s through TCP keepalive. When recovery gives up, `OnError` reports why and the channel becomes `failed`.
+A connection that drops is recovered automatically: up to `MaximumReconnectAttempts` failed attempts (10 by default, 1 to 100) with full jitter up to 30 s, each with fresh credentials, bounded by `ReconnectTimeout` (`ConnectTimeout` by default), and with a replay lookback covering the outage. The retry budget resets after a connection stays up for 60 s. A ping every 20 s keeps the connection open while a listener runs, and a ping left unanswered for 15 s of reading time means the path is dead, so the connection is recovered. Time a listener holds delivery never counts, so a slow listener never looks like a dead link. When recovery gives up, `OnError` reports why and the channel becomes `failed`.
 
 ```go
 channel.Events().OnRecovery(func(event celeris.RecoveryEvent) {
@@ -309,12 +330,12 @@ channel.Events().OnRecovery(func(event celeris.RecoveryEvent) {
 })
 ```
 
-Recovery restores every subscription and reports **possible gaps and duplicates** every time. Replayed messages already seen are dropped within the 1024-id window; duplicates beyond it reach your listeners.
+Recovery restores every subscription and reports **possible gaps and duplicates** every time. Replayed messages already seen are dropped within the deduplication window (`DeduplicationWindowSize`, 1024 ids by default); duplicates beyond it reach your listeners.
 
 ## Delivery semantics, honestly
 
 - There is **no server receipt or ack** anywhere in the protocol. `Publish` returning means the local socket accepted the bytes.
-- No offline queue, no durable history, no global ordering. Publishes still waiting when the connection drops fail with `ErrNotConnected`.
+- No offline queue beyond a reconnect, no durable history, no global ordering. Publishes still waiting in the publish queue when the connection drops wait for the reconnect and go out in call order after the restored subscriptions; they fail with the terminal error if recovery ends in `failed`, and with `ErrCancelled` on `Close`. Publishes the socket had not started writing go back to the front of the queue in their order; the one being written when the connection dropped reports `ErrDeliveryUnknown` and is never sent again.
 - A `RateLimitError` never names the command it dropped, so the client pauses and resends what it sent in the last two seconds: subscriptions as their current state, then up to 64 publishes, each at most once and with its original id so receivers drop a copy that already arrived. After eight limits in a row the limit is treated as a used-up quota: resending stops, and dropped subscriptions are retried on a slow probe, after a minute and doubling to an hour. Resends count toward usage.
 - Subscriptions and publishes wait for room when the writer is full instead of failing. A subscription change goes out ahead of publishes, but never ahead of a publish to its own segment that was queued before it.
 
@@ -324,15 +345,18 @@ Recovery restores every subscription and reports **possible gaps and duplicates*
 | ---------------- | ------------------------------------------------------------------------------------------------- |
 | Outbound command | 2 MiB encoded, refused before any write                                                           |
 | Plan payload cap | 64 KiB free, 128 KiB standard, 512 KiB pro, 1024 KiB prime; enforced by the server                |
-| Writer bounds    | 64 commands / 2 MiB not yet written; 64 queued publishes, plus resends                            |
+| Writer bounds    | 64 commands / 2 MiB not yet written; `PublishQueueSize` queued publishes (64 by default), plus resends |
 | Rate-limit pause | 1 s plus full jitter growing with consecutive limits, at most 31 s                                |
 | Resends          | last 2 s of commands, at most 64 publishes, each once                                             |
 | Quota probe      | after 8 limits in a row: dropped subscriptions retried after 1 min, doubling to 1 h               |
 | Connect deadline | `ConnectTimeout`, default 15 s, covering credentials and the handshake                            |
+| Timeout options  | each 1 ms to 15 min; 0 means the default                                                          |
+| Reconnect deadline | `ReconnectTimeout` per reconnect attempt, covering credentials and the handshake; defaults to `ConnectTimeout` |
 | Presence query   | one in flight per channel; `PresenceQueryTimeout`, default 10 s; a timeout never drops the connection |
-| Reconnect        | 10 retries, full jitter up to 30 s, reset after 60 s connected                                    |
-| Dead connection  | noticed after about 30 s of silence (TCP keepalive), then recovered                              |
-| Dedup window     | 1024 message ids per channel                                                                      |
+| Reconnect        | `MaximumReconnectAttempts` failed attempts, default 10, 1 to 100; full jitter up to 30 s, reset after 60 s connected |
+| Heartbeat        | a WebSocket ping every 20 s                                                                       |
+| Dead connection  | a ping unanswered for 15 s of reading time, time in listeners excluded: noticed within about 35 s, then recovered |
+| Dedup window     | `DeduplicationWindowSize` message ids per channel, 1024 by default                                |
 | Close            | at most about 5 s, even when the server does not answer                                           |
 
 Received messages are never size-checked: they are already in memory when they arrive. A publish rejected for your plan's cap still counts toward your usage.
