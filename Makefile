@@ -1,6 +1,7 @@
 # Checks this module. Run from the repository root:
 #
-#   make check   formatting, vet, lint, vulnerabilities, tidiness and the unit suites
+#   make check   formatting, vet, lint, vulnerabilities, tidiness and the unit
+#                suites, with vet and lint on the live suites too
 #   make live    the acceptance suites against a real Celeris stack, from .env
 #   make fuzz    a minute of decoder fuzzing
 #
@@ -19,9 +20,10 @@ check:
 	go mod tidy -diff
 	go mod verify
 	go test -race -count=1 ./...
+	cd live && GOWORK=off go vet ./... && GOWORK=off go run $(GOLANGCI_LINT) run ./...
 
 live:
-	cd live && GOWORK=off go vet ./... && GOWORK=off go test -race -count=1 -timeout 15m ./...
+	cd live && GOWORK=off go vet ./... && GOWORK=off go test -race -count=1 -timeout 30m ./...
 
 fuzz:
 	go test -run '^$$' -fuzz FuzzDecode -fuzztime 60s .

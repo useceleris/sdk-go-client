@@ -10,6 +10,14 @@ linters:
     - revive
     - unconvert
     - unparam
+    - wsl_v5
+  settings:
+    # The house layout rule: a blank line after every closing block. The other
+    # wsl checks stay off.
+    wsl_v5:
+      default: none
+      enable:
+        - after-block
   exclusions:
     rules:
       # Examples are documentation: log.Fatal keeps them short.

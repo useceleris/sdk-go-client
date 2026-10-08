@@ -31,8 +31,6 @@ jobs:
           go-version: ${{ matrix.go }}
       - run: go version
       - run: make check
-      - run: go vet ./...
-        working-directory: live
 
   fuzz:
     runs-on: ubuntu-24.04
