@@ -25,8 +25,8 @@ import (
 )
 
 // The SDK gives every publish its own id, which the server delivers as is
-// (RESEND-01): 16 random bytes, hex-encoded.
-var generatedMessageID = regexp.MustCompile("^[0-9a-f]{32}$")
+// (RESEND-01): msg__go_v<version>__, then 16 random bytes as hex.
+var generatedMessageID = regexp.MustCompile(`^msg__go_v[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9._]*__[0-9a-f]{32}$`)
 
 var channelCounter atomic.Int64
 

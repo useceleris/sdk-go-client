@@ -170,6 +170,8 @@ defer removeChannelListener()
 
 `Publish` sends with a generated message id; `PublishWithMessageID` sends with yours. Returning `nil` means the local socket accepted the bytes, not that anyone received them.
 
+A generated id is `msg__go_v`, the SDK version, two underscores, then 32 random lowercase hex digits, for example `msg__go_v1.0.0__4f1c9a0b7d2e43f6a8b5c1d0e9f27364`. It holds only letters, digits, dots and underscores, and the double underscores keep it apart from the ids that the server generates (`msg_{node}_…`). Your own id must have at least one character and no CR or LF, and the SDK sends it exactly as you give it.
+
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 defer cancel()

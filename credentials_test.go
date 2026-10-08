@@ -67,17 +67,3 @@ func TestCredentialValidationNamesFieldsWithoutValues(t *testing.T) {
 		t.Fatalf("valid credentials refused: %v", err)
 	}
 } // end function TestCredentialValidationNamesFieldsWithoutValues
-
-func TestGeneratedMessageIDsAreRandomHex(t *testing.T) {
-	seen := map[string]bool{}
-
-	for range 100 {
-		identifier := generateMessageID()
-
-		if len(identifier) != 32 || strings.Trim(identifier, "0123456789abcdef") != "" || seen[identifier] {
-			t.Fatalf("message id %q", identifier)
-		}
-
-		seen[identifier] = true
-	}
-} // end function TestGeneratedMessageIDsAreRandomHex

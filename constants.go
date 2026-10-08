@@ -56,6 +56,13 @@ const (
 	// collide.
 	messageIDRandomBytes = 16
 
+	// Every generated message id names the SDK that made it (RESEND-01). Go
+	// modules carry no version of their own, so sdkVersion is set to the next
+	// release's tag, without its "v", before that tag is pushed.
+	sdkLanguage = "go"
+
+	sdkVersion = "1.0.0"
+
 	// Decoder bounds. These limit parsing work and recursion, not message
 	// size; no legitimate server message approaches them.
 	maximumFragments = 4096
