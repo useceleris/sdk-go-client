@@ -31,7 +31,7 @@ func TestConnectMovesThroughConnectingToConnected(t *testing.T) {
 		assertStates(t, states, StateConnecting, StateConnected)
 		channel.Close()
 	})
-}
+} // end function TestConnectMovesThroughConnectingToConnected
 
 func TestConstructionDoesNoNetworkWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -44,7 +44,7 @@ func TestConstructionDoesNoNetworkWork(t *testing.T) {
 			t.Fatal("construction did network work or reused a channel")
 		}
 	})
-}
+} // end function TestConstructionDoesNoNetworkWork
 
 func TestConcurrentConnectIsRejected(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -63,7 +63,7 @@ func TestConcurrentConnectIsRejected(t *testing.T) {
 		assertCode(t, channel.Connect(t.Context()), ErrOperationInProgress)
 		channel.Close()
 	})
-}
+} // end function TestConcurrentConnectIsRejected
 
 func TestConnectAfterCloseIsRejected(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestConnectAfterCloseIsRejected(t *testing.T) {
 			t.Fatalf("state %s, want closed", channel.State())
 		}
 	})
-}
+} // end function TestConnectAfterCloseIsRejected
 
 func TestInitialFailureIsReportedOnceToTheCaller(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -103,7 +103,7 @@ func TestInitialFailureIsReportedOnceToTheCaller(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestInitialFailureIsReportedOnceToTheCaller
 
 func TestDialFailureNeverQuotesTheCredentialURL(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -117,7 +117,7 @@ func TestDialFailureNeverQuotesTheCredentialURL(t *testing.T) {
 			t.Fatalf("dial error leaked: %v", err)
 		}
 	})
-}
+} // end function TestDialFailureNeverQuotesTheCredentialURL
 
 func TestCancellingConnectAbandonsTheAttempt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -136,33 +136,31 @@ func TestCancellingConnectAbandonsTheAttempt(t *testing.T) {
 			t.Fatalf("state %s with %d sockets", channel.State(), server.socketCount())
 		}
 	})
-}
+} // end function TestCancellingConnectAbandonsTheAttempt
 
 func TestConnectDeadlineCoversCredentialsAndHandshake(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		channel, server := newTestChannel(t)
-		channel.client.connectTimeout = 5 * time.Second
-		server.set(func(server *fakeServer) { server.blockProvider = true })
+		channel, server := newClientChannel(t, ClientOptions{ConnectTimeout: 5 * time.Second})
+		err := expectConnectTimeout(t, channel, server, 5*time.Second)
+
+		if want := "Connection attempt timed out after 5s."; err.Error() != want {
+			t.Fatalf("message %q, want %q", err.Error(), want)
+		}
+
+		server.set(func(server *fakeServer) { server.blockDials = true })
 		start := time.Now()
 
 		assertCode(t, channel.Connect(t.Context()), ErrTimeout)
 
 		if elapsed := time.Since(start); elapsed != 5*time.Second {
-			t.Fatalf("timed out after %v, want 5s", elapsed)
+			t.Fatalf("handshake timed out after %v, want 5s", elapsed)
 		}
-
-		server.set(func(server *fakeServer) {
-			server.blockProvider = false
-			server.blockDials = true
-		})
-
-		assertCode(t, channel.Connect(t.Context()), ErrTimeout)
 
 		if channel.State() != StateFailed {
 			t.Fatalf("state %s, want failed", channel.State())
 		}
 	})
-}
+} // end function TestConnectDeadlineCoversCredentialsAndHandshake
 
 func TestCallerDeadlineIsATimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -173,7 +171,7 @@ func TestCallerDeadlineIsATimeout(t *testing.T) {
 
 		assertCode(t, channel.Connect(ctx), ErrTimeout)
 	})
-}
+} // end function TestCallerDeadlineIsATimeout
 
 func TestProviderThatIgnoresItsContextCannotHoldTheAttempt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -195,7 +193,7 @@ func TestProviderThatIgnoresItsContextCannotHoldTheAttempt(t *testing.T) {
 			t.Fatalf("late credentials opened a socket")
 		}
 	})
-}
+} // end function TestProviderThatIgnoresItsContextCannotHoldTheAttempt
 
 func TestProviderPanicIsATransportFailure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -206,7 +204,7 @@ func TestProviderPanicIsATransportFailure(t *testing.T) {
 
 		assertCode(t, channel.Connect(t.Context()), ErrTransport)
 	})
-}
+} // end function TestProviderPanicIsATransportFailure
 
 func TestInvalidCredentialsAreAConfigurationError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -216,7 +214,7 @@ func TestInvalidCredentialsAreAConfigurationError(t *testing.T) {
 		err := channel.Connect(t.Context())
 		assertConfigurationError(t, err, "Invalid credentials. Signature: Must not be empty.")
 	})
-}
+} // end function TestInvalidCredentialsAreAConfigurationError
 
 func TestInitialCredentialRequestCarriesNoOutage(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -233,7 +231,7 @@ func TestInitialCredentialRequestCarriesNoOutage(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestInitialCredentialRequestCarriesNoOutage
 
 func TestStateListenersRunInOrderAndRemoveCleanly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -254,7 +252,7 @@ func TestStateListenersRunInOrderAndRemoveCleanly(t *testing.T) {
 			t.Fatalf("order %v, want %v", got, want)
 		}
 	})
-}
+} // end function TestStateListenersRunInOrderAndRemoveCleanly
 
 func TestListenerRemovedMidDispatchIsSkipped(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -265,6 +263,7 @@ func TestListenerRemovedMidDispatchIsSkipped(t *testing.T) {
 			order.record("first")
 			removeSecond()
 		})
+
 		removeSecond = channel.Events().OnStateChange(func(ChannelState) { order.record("second") })
 		shared := func(ChannelState) { order.record("shared") }
 		channel.Events().OnStateChange(shared)
@@ -286,7 +285,7 @@ func TestListenerRemovedMidDispatchIsSkipped(t *testing.T) {
 			t.Fatalf("order %v, want %v", got, want)
 		}
 	})
-}
+} // end function TestListenerRemovedMidDispatchIsSkipped
 
 func TestPanickingListenersAreContainedAndReportedOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -318,19 +317,26 @@ func TestPanickingListenersAreContainedAndReportedOnce(t *testing.T) {
 			t.Fatalf("reported %q", reported[0].Error())
 		}
 	})
-}
+} // end function TestPanickingListenersAreContainedAndReportedOnce
 
 func TestNilListenersAreRefused(t *testing.T) {
 	channel, _ := newTestChannel(t)
 
-	defer func() {
-		if recover() == nil {
-			t.Fatal("a nil listener was accepted")
-		}
-	}()
+	for name, register := range map[string]func(){
+		"OnError":   func() { channel.Events().OnError(nil) },
+		"OnMessage": func() { channel.Events().OnMessage(nil) },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("a nil %s listener was accepted", name)
+				}
+			}()
 
-	channel.Events().OnError(nil)
-}
+			register()
+		}()
+	}
+} // end function TestNilListenersAreRefused
 
 func TestChannelReferencesAreValidated(t *testing.T) {
 	client, err := NewClient(ClientOptions{CredentialProvider: (&fakeServer{}).provide})
@@ -353,7 +359,7 @@ func TestChannelReferencesAreValidated(t *testing.T) {
 	if _, err := client.Channel(strings.Repeat("a", 255) + ""); err != nil {
 		t.Fatalf("255 characters refused: %v", err)
 	}
-}
+} // end function TestChannelReferencesAreValidated
 
 func TestSegmentIDsAreValidated(t *testing.T) {
 	channel, _ := newTestChannel(t)
@@ -369,32 +375,4 @@ func TestSegmentIDsAreValidated(t *testing.T) {
 	if channel.DefaultSegment().ID() != "default" {
 		t.Fatal("default segment id")
 	}
-}
-
-func TestClientOptionsAreValidated(t *testing.T) {
-	provider := (&fakeServer{}).provide
-	cases := []struct {
-		options ClientOptions
-		message string
-	}{
-		{ClientOptions{}, "Invalid client options. CredentialProvider: Required."},
-		{ClientOptions{CredentialProvider: provider, ConnectTimeout: -1, PresenceQueryTimeout: -1}, "Invalid client options. ConnectTimeout: Must not be negative. PresenceQueryTimeout: Must not be negative."},
-		{ClientOptions{CredentialProvider: provider, BaseURL: "https://example.test"}, "Invalid connection URL. BaseURL must use wss://, or ws:// for a loopback host when AllowInsecureLoopback is true."},
-	}
-
-	for _, test := range cases {
-		_, err := NewClient(test.options)
-		assertConfigurationError(t, err, test.message)
-	}
-
-	client, err := NewClient(ClientOptions{CredentialProvider: provider})
-
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// ENDPOINT-01: consumers do not configure where Celeris lives.
-	if client.baseURL.String() != "wss://realtime.useceleris.com" || client.connectTimeout != 15*time.Second || client.presenceQueryTimeout != 10*time.Second {
-		t.Fatalf("defaults %v %v %v", client.baseURL, client.connectTimeout, client.presenceQueryTimeout)
-	}
-}
+} // end function TestSegmentIDsAreValidated

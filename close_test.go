@@ -2,6 +2,7 @@ package celeris
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -27,7 +28,7 @@ func TestCloseIsIdempotentAndConcurrent(t *testing.T) {
 
 		assertStates(t, states, StateClosing, StateClosed)
 	})
-}
+} // end function TestCloseIsIdempotentAndConcurrent
 
 func TestCloseShutsAConnectedChannelGracefully(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -44,7 +45,7 @@ func TestCloseShutsAConnectedChannelGracefully(t *testing.T) {
 			t.Fatal("no closing handshake")
 		}
 	})
-}
+} // end function TestCloseShutsAConnectedChannelGracefully
 
 func TestCloseFlushesHandedOffPublishes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -66,7 +67,7 @@ func TestCloseFlushesHandedOffPublishes(t *testing.T) {
 
 		assertCommands(t, socket, publishFrame("default", "m-1", "x"))
 	})
-}
+} // end function TestCloseFlushesHandedOffPublishes
 
 func TestCloseIsBoundedByItsBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -100,7 +101,7 @@ func TestCloseIsBoundedByItsBudget(t *testing.T) {
 		assertCode(t, <-writing, ErrDeliveryUnknown)
 		assertCode(t, <-waiting, ErrCancelled)
 	})
-}
+} // end function TestCloseIsBoundedByItsBudget
 
 func TestCloseAbortsAPendingAttemptAndDiscardsLateCredentials(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -126,7 +127,7 @@ func TestCloseAbortsAPendingAttemptAndDiscardsLateCredentials(t *testing.T) {
 			t.Fatalf("state %s with %d sockets", channel.State(), server.socketCount())
 		}
 	})
-}
+} // end function TestCloseAbortsAPendingAttemptAndDiscardsLateCredentials
 
 func TestStaleSocketEventsAfterCloseAreIgnored(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -147,7 +148,7 @@ func TestStaleSocketEventsAfterCloseAreIgnored(t *testing.T) {
 			t.Fatalf("states %v, errors %v", states.all(), errorsSeen.all())
 		}
 	})
-}
+} // end function TestStaleSocketEventsAfterCloseAreIgnored
 
 func TestCloseWorksFromEveryNonTerminalState(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -174,7 +175,7 @@ func TestCloseWorksFromEveryNonTerminalState(t *testing.T) {
 			}
 		}
 	})
-}
+} // end function TestCloseWorksFromEveryNonTerminalState
 
 // A write failing while Close flushes the writer fails the publishes behind it
 // as cancelled by Close, not as lost to a connection that will be restored.
@@ -194,4 +195,63 @@ func TestWriteFailingDuringCloseCancelsTheRest(t *testing.T) {
 		assertCode(t, <-writing, ErrDeliveryUnknown)
 		assertCode(t, <-waiting, ErrCancelled)
 	})
-}
+} // end function TestWriteFailingDuringCloseCancelsTheRest
+
+// While Close flushes the writer, a new publish is refused and nothing is
+// written for it. A publish still queued behind the writer is cancelled.
+func TestClosingRefusesPublishesAndCancelsQueuedOnes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		lobby := channel.DefaultSegment()
+		release := socket.holdWrites()
+		var handedOff []<-chan error
+		var want []string
+
+		// 64 fill the writer, so the next one waits in the queue.
+		for index := range 64 {
+			handedOff = append(handedOff, publishAsync(t, lobby, "m-"+strconv.Itoa(index), "x"))
+			want = append(want, publishFrame("default", "m-"+strconv.Itoa(index), "x"))
+			synctest.Wait()
+		}
+
+		queued := publishAsync(t, lobby, "queued", "x")
+		synctest.Wait()
+		closed := make(chan struct{})
+
+		go func() {
+			channel.Close()
+			close(closed)
+		}()
+
+		synctest.Wait()
+
+		if channel.State() != StateClosing {
+			t.Fatalf("state %s, want closing", channel.State())
+		}
+
+		err := <-queued
+		assertCode(t, err, ErrCancelled)
+
+		if want := "Channel closed before the publish was sent."; err.Error() != want {
+			t.Fatalf("message %q, want %q", err.Error(), want)
+		}
+
+		err = lobby.PublishWithMessageID(t.Context(), []byte("x"), "late")
+		assertCode(t, err, ErrNotConnected)
+
+		if want := "Channel is not connected; it is closing."; err.Error() != want {
+			t.Fatalf("message %q, want %q", err.Error(), want)
+		}
+
+		release()
+		<-closed
+
+		for _, result := range handedOff {
+			if err := <-result; err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		assertCommands(t, socket, want...)
+	})
+} // end function TestClosingRefusesPublishesAndCancelsQueuedOnes

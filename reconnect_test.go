@@ -34,7 +34,62 @@ func expectAttemptAfter(t *testing.T, server *fakeServer, delay time.Duration) *
 	}
 
 	return server.socket(-1)
-}
+} // end function expectAttemptAfter
+
+func TestReconnectTimeoutBoundsOnlyReconnectAttempts(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, server := newClientChannel(t, ClientOptions{ReconnectTimeout: 3 * time.Second})
+		server.set(func(server *fakeServer) { server.blockProvider = true })
+		start := time.Now()
+		err := channel.Connect(t.Context())
+
+		if elapsed := time.Since(start); elapsed != 15*time.Second {
+			t.Fatalf("initial attempt ended after %v, want 15s", elapsed)
+		}
+
+		if err == nil || err.Error() != "Connection attempt timed out after 15s." {
+			t.Fatalf("initial attempt: %v", err)
+		}
+
+		connected, reconnectServer, socket := connectClientChannel(t, ClientOptions{ReconnectTimeout: 3 * time.Second})
+		errorsSeen := recordErrors(connected)
+		reconnectServer.set(func(server *fakeServer) { server.blockProvider = true })
+		socket.drop()
+		synctest.Wait()
+
+		// The connect, then the first reconnect attempt.
+		if got := len(reconnectServer.credentialRequests()); got != 2 {
+			t.Fatalf("%d credential requests, want the first reconnect attempt started", got)
+		}
+
+		synctest.Sleep(3*time.Second - time.Millisecond)
+
+		if len(reconnectServer.credentialRequests()) != 2 {
+			t.Fatal("second attempt before the 3s reconnect deadline")
+		}
+
+		synctest.Sleep(time.Millisecond)
+
+		if len(reconnectServer.credentialRequests()) != 3 {
+			t.Fatal("no second attempt after the 3s reconnect deadline")
+		}
+
+		// The remaining eight attempts, 3 s each with zero jitter, exhaust
+		// the retry budget.
+		synctest.Sleep(27 * time.Second)
+		synctest.Wait()
+
+		if connected.State() != StateFailed {
+			t.Fatalf("state %s", connected.State())
+		}
+
+		reported := errorsSeen.all()
+
+		if len(reported) != 1 || reported[0].Error() != "Connection attempt timed out after 3s." {
+			t.Fatalf("errors %v", reported)
+		}
+	})
+} // end function TestReconnectTimeoutBoundsOnlyReconnectAttempts
 
 func TestReconnectDelaysAreJitteredAndBoundedThenFail(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -94,7 +149,7 @@ func TestReconnectDelaysAreJitteredAndBoundedThenFail(t *testing.T) {
 			t.Fatalf("%d reconnect requests", reconnects)
 		}
 	})
-}
+} // end function TestReconnectDelaysAreJitteredAndBoundedThenFail
 
 func TestRetryBudgetResetsOnlyAfterSixtySecondsConnected(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -122,7 +177,7 @@ func TestRetryBudgetResetsOnlyAfterSixtySecondsConnected(t *testing.T) {
 			t.Fatalf("state %s", channel.State())
 		}
 	})
-}
+} // end function TestRetryBudgetResetsOnlyAfterSixtySecondsConnected
 
 func TestRecoveryFollowsTheConnectedStateWithItsRetryIndex(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -140,7 +195,7 @@ func TestRecoveryFollowsTheConnectedStateWithItsRetryIndex(t *testing.T) {
 			t.Fatalf("log %v", got)
 		}
 	})
-}
+} // end function TestRecoveryFollowsTheConnectedStateWithItsRetryIndex
 
 func TestReconnectRequestsFreshCredentialsWithAGrowingLookback(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -189,7 +244,7 @@ func TestReconnectRequestsFreshCredentialsWithAGrowingLookback(t *testing.T) {
 			t.Fatal("lookback is not rounded up or not capped")
 		}
 	})
-}
+} // end function TestReconnectRequestsFreshCredentialsWithAGrowingLookback
 
 func TestDeterministicReconnectFailureIsTerminalAtOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -203,7 +258,7 @@ func TestDeterministicReconnectFailureIsTerminalAtOnce(t *testing.T) {
 			t.Fatalf("state %s, errors %v", channel.State(), reported)
 		}
 	})
-}
+} // end function TestDeterministicReconnectFailureIsTerminalAtOnce
 
 func TestUndecodableMessageNeverStartsAReconnect(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -216,7 +271,7 @@ func TestUndecodableMessageNeverStartsAReconnect(t *testing.T) {
 			t.Fatalf("state %s, errors %v", channel.State(), errorsSeen.all())
 		}
 	})
-}
+} // end function TestUndecodableMessageNeverStartsAReconnect
 
 func TestCloseDuringAReconnectAttemptStopsRecovery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -234,7 +289,7 @@ func TestCloseDuringAReconnectAttemptStopsRecovery(t *testing.T) {
 			t.Fatalf("state %s with %d sockets", channel.State(), server.socketCount())
 		}
 	})
-}
+} // end function TestCloseDuringAReconnectAttemptStopsRecovery
 
 // A close at the instant a retry timer fires must not let the closed channel
 // reconnect.
@@ -261,7 +316,7 @@ func TestCloseRacingARetryTimerNeverReconnects(t *testing.T) {
 			}
 		}
 	})
-}
+} // end function TestCloseRacingARetryTimerNeverReconnects
 
 func TestRestorationSendsCurrentIntentMessagesThenPresence(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -290,7 +345,7 @@ func TestRestorationSendsCurrentIntentMessagesThenPresence(t *testing.T) {
 		// cancelled intent excluded, no publish resent.
 		assertCommands(t, server.socket(-1), "@SUB\n$4\nbeta\n", "@SUB\n$5\nalpha\n", "@PRES_SUB\n$7\ndefault\n", "@PRES_SUB\n$5\nalpha\n")
 	})
-}
+} // end function TestRestorationSendsCurrentIntentMessagesThenPresence
 
 func TestRestorationPrecedesAnyPublishMadeOnConnected(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -304,6 +359,7 @@ func TestRestorationPrecedesAnyPublishMadeOnConnected(t *testing.T) {
 
 			log.record(string(state))
 		})
+
 		channel.Events().OnRecovery(func(RecoveryEvent) { log.record("recovery") })
 		socket.drop()
 		synctest.Wait()
@@ -314,7 +370,7 @@ func TestRestorationPrecedesAnyPublishMadeOnConnected(t *testing.T) {
 			t.Fatalf("log %v", log.all())
 		}
 	})
-}
+} // end function TestRestorationPrecedesAnyPublishMadeOnConnected
 
 // Frames that arrived with the handshake are routed only after the connected
 // state and the recovery event.
@@ -348,7 +404,7 @@ func TestHandshakeFramesFollowConnectedAndRecovery(t *testing.T) {
 			t.Fatalf("log %v", log.all())
 		}
 	})
-}
+} // end function TestHandshakeFramesFollowConnectedAndRecovery
 
 func TestDefaultSegmentKeepsDeliveringWithoutRestoration(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -369,7 +425,7 @@ func TestDefaultSegmentKeepsDeliveringWithoutRestoration(t *testing.T) {
 			t.Fatalf("delivered %v", delivered.all())
 		}
 	})
-}
+} // end function TestDefaultSegmentKeepsDeliveringWithoutRestoration
 
 func TestReplayedDuplicatesAreAbsorbedAcrossReconnect(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -385,7 +441,7 @@ func TestReplayedDuplicatesAreAbsorbedAcrossReconnect(t *testing.T) {
 			t.Fatalf("delivered %v", delivered.all())
 		}
 	})
-}
+} // end function TestReplayedDuplicatesAreAbsorbedAcrossReconnect
 
 func TestRequestIDsAreNeverReusedAcrossReconnects(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -406,7 +462,7 @@ func TestRequestIDsAreNeverReusedAcrossReconnects(t *testing.T) {
 			t.Fatal(outcome.err)
 		}
 	})
-}
+} // end function TestRequestIDsAreNeverReusedAcrossReconnects
 
 func TestSecondRecoveryRestoresIntentWithoutDuplicates(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -428,4 +484,4 @@ func TestSecondRecoveryRestoresIntentWithoutDuplicates(t *testing.T) {
 			t.Fatalf("state %s", channel.State())
 		}
 	})
-}
+} // end function TestSecondRecoveryRestoresIntentWithoutDuplicates

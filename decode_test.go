@@ -22,7 +22,7 @@ func TestDecodingVectors(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestDecodingVectors
 
 func TestDecodingRejectsMalformedMessages(t *testing.T) {
 	for index, data := range malformedVectors() {
@@ -32,7 +32,7 @@ func TestDecodingRejectsMalformedMessages(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestDecodingRejectsMalformedMessages
 
 func TestDecodingRejectsEveryTruncation(t *testing.T) {
 	data := decodingVectors()[0].data
@@ -42,7 +42,7 @@ func TestDecodingRejectsEveryTruncation(t *testing.T) {
 			t.Fatalf("length %d: got %v, want a protocol error", length, err)
 		}
 	}
-}
+} // end function TestDecodingRejectsEveryTruncation
 
 func TestDecodingBoundsNestingAndFragments(t *testing.T) {
 	if _, err := decodeServerMessage([]byte(strings.Repeat("*1\n", 31) + "*0\n")); err != nil {
@@ -60,7 +60,7 @@ func TestDecodingBoundsNestingAndFragments(t *testing.T) {
 	if _, err := decodeServerMessage([]byte("*1366\n" + strings.Repeat("@SERVER_MSG\n:1\n$0\n\n", 1366))); !errors.Is(err, ErrProtocol) {
 		t.Fatalf("over 4096 fragments: got %v, want a protocol error", err)
 	}
-}
+} // end function TestDecodingBoundsNestingAndFragments
 
 // LIMIT-01: received messages are never size-checked.
 func TestDecodingAcceptsMessagesOverOneMebibyte(t *testing.T) {
@@ -75,7 +75,7 @@ func TestDecodingAcceptsMessagesOverOneMebibyte(t *testing.T) {
 	if delivery, ok := message.(deliveryMessage); !ok || delivery.segmentID != "chat" || len(delivery.payload) != payloadLength {
 		t.Fatalf("decoded %T, want the full delivery", message)
 	}
-}
+} // end function TestDecodingAcceptsMessagesOverOneMebibyte
 
 func TestDecodingCopiesPayloads(t *testing.T) {
 	data := []byte("*2\n@SERVER_MSG\n:1\n$1\nx\n@SERVER_MSG\n:1\n$1\nx\n")
@@ -102,7 +102,7 @@ func TestDecodingCopiesPayloads(t *testing.T) {
 	if string(second.payload) != "x" {
 		t.Fatalf("payloads share memory: %q", second.payload)
 	}
-}
+} // end function TestDecodingCopiesPayloads
 
 func TestDecodingSurvivesMutatedInputs(t *testing.T) {
 	vectors := decodingVectors()
@@ -117,4 +117,4 @@ func TestDecodingSurvivesMutatedInputs(t *testing.T) {
 			t.Fatalf("got %v, want success or a protocol error", err)
 		}
 	}
-}
+} // end function TestDecodingSurvivesMutatedInputs

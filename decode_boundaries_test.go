@@ -26,7 +26,7 @@ func TestDecodingAcceptsMaximumLengthHeaders(t *testing.T) {
 			t.Fatalf("%q: decoded %#v", newline, message)
 		}
 	}
-}
+} // end function TestDecodingAcceptsMaximumLengthHeaders
 
 func TestDecodingReportsBoundedHeaderFailures(t *testing.T) {
 	cases := []struct {
@@ -47,7 +47,7 @@ func TestDecodingReportsBoundedHeaderFailures(t *testing.T) {
 		_, err := decodeServerMessage([]byte("@SERVER_MSG\n:" + test.header))
 		assertProtocolError(t, err, test.reason, "Timestamp", 12)
 	}
-}
+} // end function TestDecodingReportsBoundedHeaderFailures
 
 func TestDecodingCopiesPayloadsContainingMarkerBytes(t *testing.T) {
 	payload := make([]byte, 65536)
@@ -71,7 +71,7 @@ func TestDecodingCopiesPayloadsContainingMarkerBytes(t *testing.T) {
 	if !bytes.Equal(message.(noticeMessage).payload, payload) {
 		t.Fatal("payload changed with its input")
 	}
-}
+} // end function TestDecodingCopiesPayloadsContainingMarkerBytes
 
 func assertProtocolError(t *testing.T, err error, reason, field string, offset int) {
 	t.Helper()
@@ -85,4 +85,4 @@ func assertProtocolError(t *testing.T, err error, reason, field string, offset i
 	if sdkError.Message != reason || sdkError.Field != field || sdkError.Offset != offset {
 		t.Fatalf("got %q at %s byte %d, want %q at %s byte %d", sdkError.Message, sdkError.Field, sdkError.Offset, reason, field, offset)
 	}
-}
+} // end function assertProtocolError

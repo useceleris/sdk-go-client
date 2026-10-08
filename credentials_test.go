@@ -33,7 +33,7 @@ func TestCredentialsNeverPrint(t *testing.T) {
 	if strings.Contains(logged.String(), "synthetic") {
 		t.Fatalf("slog printed %q", logged.String())
 	}
-}
+} // end function TestCredentialsNeverPrint
 
 func TestCredentialsEncodeAsJSONForCredentialEndpoints(t *testing.T) {
 	encoded, err := json.Marshal(Credentials{Payload: "p", Signature: "s"})
@@ -47,7 +47,7 @@ func TestCredentialsEncodeAsJSONForCredentialEndpoints(t *testing.T) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil || decoded.Payload != "p" || decoded.Signature != "s" {
 		t.Fatalf("decoded %v", err)
 	}
-}
+} // end function TestCredentialsEncodeAsJSONForCredentialEndpoints
 
 func TestCredentialValidationNamesFieldsWithoutValues(t *testing.T) {
 	cases := []struct {
@@ -66,7 +66,7 @@ func TestCredentialValidationNamesFieldsWithoutValues(t *testing.T) {
 	if err := validateCredentials(Credentials{Payload: "p", Signature: "s"}); err != nil {
 		t.Fatalf("valid credentials refused: %v", err)
 	}
-}
+} // end function TestCredentialValidationNamesFieldsWithoutValues
 
 func TestGeneratedMessageIDsAreRandomHex(t *testing.T) {
 	seen := map[string]bool{}
@@ -80,4 +80,4 @@ func TestGeneratedMessageIDsAreRandomHex(t *testing.T) {
 
 		seen[identifier] = true
 	}
-}
+} // end function TestGeneratedMessageIDsAreRandomHex

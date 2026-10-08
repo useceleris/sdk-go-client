@@ -43,7 +43,11 @@ var exportedSurface = []string{
 	"field ClientOptions.BaseURL",
 	"field ClientOptions.ConnectTimeout",
 	"field ClientOptions.CredentialProvider",
+	"field ClientOptions.DeduplicationWindowSize",
+	"field ClientOptions.MaximumReconnectAttempts",
 	"field ClientOptions.PresenceQueryTimeout",
+	"field ClientOptions.PublishQueueSize",
+	"field ClientOptions.ReconnectTimeout",
 	"field CredentialRequest.ChannelReference",
 	"field CredentialRequest.DisconnectedAt",
 	"field CredentialRequest.Reconnect",
@@ -95,6 +99,7 @@ var exportedSurface = []string{
 	"method Channel.Segment",
 	"method Channel.State",
 	"method ChannelEventHandler.OnError",
+	"method ChannelEventHandler.OnMessage",
 	"method ChannelEventHandler.OnNotice",
 	"method ChannelEventHandler.OnRecovery",
 	"method ChannelEventHandler.OnStateChange",
@@ -175,7 +180,7 @@ func sourceFiles(t *testing.T) map[string]*ast.File {
 	}
 
 	return files
-}
+} // end function sourceFiles
 
 func TestExportedSurfaceIsPinned(t *testing.T) {
 	var surface []string
@@ -195,7 +200,7 @@ func TestExportedSurfaceIsPinned(t *testing.T) {
 	if !slices.Equal(surface, exportedSurface) {
 		t.Fatalf("exported surface changed:\n%s", strings.Join(surface, "\n"))
 	}
-}
+} // end function TestExportedSurfaceIsPinned
 
 func exportedNames(declaration ast.Decl) []string {
 	var names []string
@@ -253,7 +258,7 @@ func exportedNames(declaration ast.Decl) []string {
 	}
 
 	return names
-}
+} // end function exportedNames
 
 // AUTH-05: a client never signs, so nothing in this module can reach a
 // signing facility. crypto/hmac and crypto/sha512 still appear among the
@@ -296,7 +301,7 @@ func TestNoSigningFacilityIsReachable(t *testing.T) {
 			t.Errorf("go %s reaches the server module", strings.Join(arguments, " "))
 		}
 	}
-}
+} // end function TestNoSigningFacilityIsReachable
 
 // Credentials travel in the handshake URL, so the package prints and logs
 // nothing; and importing it starts no work.
@@ -316,7 +321,10 @@ func TestPackageNeitherPrintsNorStartsWorkAtImport(t *testing.T) {
 				if packageName, ok := node.X.(*ast.Ident); ok {
 					call := packageName.Name + "." + node.Sel.Name
 
-					if packageName.Name == "log" || strings.HasPrefix(call, "fmt.Print") || strings.HasPrefix(call, "fmt.Fprint") || call == "os.Stdout" || call == "os.Stderr" || packageName.Name == "slog" && node.Sel.Name != "Value" && node.Sel.Name != "StringValue" {
+					prints := strings.HasPrefix(call, "fmt.Print") || strings.HasPrefix(call, "fmt.Fprint") || call == "os.Stdout" || call == "os.Stderr"
+					logs := packageName.Name == "log" || packageName.Name == "slog" && node.Sel.Name != "Value" && node.Sel.Name != "StringValue"
+
+					if prints || logs {
 						t.Errorf("%s uses %s", path, call)
 					}
 				}
@@ -329,4 +337,4 @@ func TestPackageNeitherPrintsNorStartsWorkAtImport(t *testing.T) {
 			return true
 		})
 	}
-}
+} // end function TestPackageNeitherPrintsNorStartsWorkAtImport

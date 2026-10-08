@@ -20,7 +20,7 @@ type presenceResponse struct {
 	from        int
 	to          int
 	connections []PresenceConnection
-}
+} // end struct presenceResponse
 
 func presenceResponseFrame(response presenceResponse) string {
 	frame := "@PRES_LIST_RESPONSE\n+" + response.segmentID + "\n" + bulk(response.requestID)
@@ -36,7 +36,7 @@ func presenceResponseFrame(response presenceResponse) string {
 	}
 
 	return frame
-}
+} // end function presenceResponseFrame
 
 // response is a one-connection page answering request id.
 func response(requestID string) presenceResponse {
@@ -50,11 +50,11 @@ func response(requestID string) presenceResponse {
 		to:          1,
 		connections: []PresenceConnection{{TokenReference: "user", ConnectionID: "connection-1", Timestamp: 123}},
 	}
-}
+} // end function response
 
 func presenceErrorFrame(errorType, requestID string) string {
 	return errorFrame(errorType, "failed", "PRES_LIST", bulk(requestID))
-}
+} // end function presenceErrorFrame
 
 func presenceNotifyFrame(segmentID string, joined bool, timestamp int) string {
 	event := "0"
@@ -64,12 +64,12 @@ func presenceNotifyFrame(segmentID string, joined bool, timestamp int) string {
 	}
 
 	return "@PRES_NOTIFY\n+" + segmentID + "\n+user\n+connection-1\n;" + event + "\n:" + strconv.Itoa(timestamp) + "\n"
-}
+} // end function presenceNotifyFrame
 
 type queryOutcome struct {
 	page PresencePage
 	err  error
-}
+} // end struct queryOutcome
 
 // queryAsync starts a presence query from its own goroutine and waits until
 // it is sent or refused.
@@ -84,7 +84,7 @@ func queryAsync(ctx context.Context, handle *Segment, page, perPage int32) <-cha
 	synctest.Wait()
 
 	return result
-}
+} // end function queryAsync
 
 func TestPresenceInterestsShareOneCount(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -100,7 +100,7 @@ func TestPresenceInterestsShareOneCount(t *testing.T) {
 		synctest.Wait()
 		assertCommands(t, socket, "@PRES_SUB\n$4\nchat\n", "@PRES_UNSUB\n$4\nchat\n")
 	})
-}
+} // end function TestPresenceInterestsShareOneCount
 
 func TestDefaultSegmentTakesPresenceCommands(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -109,35 +109,22 @@ func TestDefaultSegmentTakesPresenceCommands(t *testing.T) {
 		synctest.Wait()
 		assertCommands(t, socket, "@PRES_SUB\n$7\ndefault\n", "@PRES_UNSUB\n$7\ndefault\n")
 	})
-}
+} // end function TestDefaultSegmentTakesPresenceCommands
 
-func TestPresenceInterestKeepsTheSegmentJoined(t *testing.T) {
+func TestMessageCancelSendsUnsubscribeWhilePresenceIsHeld(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		channel, _, socket := connectTestChannel(t)
 		messages := subscribe(t, segment(t, channel, "chat"))
 		presence := subscribePresence(t, segment(t, channel, "chat"))
 		messages.Cancel()
 		synctest.Wait()
-		assertCommands(t, socket, "@SUB\n$4\nchat\n", "@PRES_SUB\n$4\nchat\n")
+		assertCommands(t, socket, "@SUB\n$4\nchat\n", "@PRES_SUB\n$4\nchat\n", "@UNSUB\n$4\nchat\n")
 
-		// Cancelling presence sends PRES_UNSUB and never UNSUB.
 		presence.Cancel()
 		synctest.Wait()
-		assertCommands(t, socket, "@SUB\n$4\nchat\n", "@PRES_SUB\n$4\nchat\n", "@PRES_UNSUB\n$4\nchat\n")
+		assertCommands(t, socket, "@SUB\n$4\nchat\n", "@PRES_SUB\n$4\nchat\n", "@UNSUB\n$4\nchat\n", "@PRES_UNSUB\n$4\nchat\n")
 	})
-}
-
-func TestUnsubscribeFollowsOnceBothInterestsAreReleased(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		channel, _, socket := connectTestChannel(t)
-		messages := subscribe(t, segment(t, channel, "chat"))
-		presence := subscribePresence(t, segment(t, channel, "chat"))
-		presence.Cancel()
-		messages.Cancel()
-		synctest.Wait()
-		assertCommands(t, socket, "@SUB\n$4\nchat\n", "@PRES_SUB\n$4\nchat\n", "@PRES_UNSUB\n$4\nchat\n", "@UNSUB\n$4\nchat\n")
-	})
-}
+} // end function TestMessageCancelSendsUnsubscribeWhilePresenceIsHeld
 
 func TestPresenceInterestOnAClosedChannelFails(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -146,7 +133,7 @@ func TestPresenceInterestOnAClosedChannelFails(t *testing.T) {
 		_, err := segment(t, channel, "chat").SubscribePresence()
 		assertCode(t, err, ErrNotConnected)
 	})
-}
+} // end function TestPresenceInterestOnAClosedChannelFails
 
 func TestPresenceQueryResolvesWithRawMetadata(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -169,7 +156,7 @@ func TestPresenceQueryResolvesWithRawMetadata(t *testing.T) {
 			t.Fatalf("got %+v and %v", outcome.page, outcome.err)
 		}
 	})
-}
+} // end function TestPresenceQueryResolvesWithRawMetadata
 
 func TestPresencePagePastTheEndKeepsFromAboveTo(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -183,7 +170,7 @@ func TestPresencePagePastTheEndKeepsFromAboveTo(t *testing.T) {
 			t.Fatalf("got %+v and %v", outcome.page, outcome.err)
 		}
 	})
-}
+} // end function TestPresencePagePastTheEndKeepsFromAboveTo
 
 func TestOnePresenceQueryAtATime(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -199,7 +186,7 @@ func TestOnePresenceQueryAtATime(t *testing.T) {
 			t.Fatalf("got %+v and %v", outcome.page, outcome.err)
 		}
 	})
-}
+} // end function TestOnePresenceQueryAtATime
 
 func TestPresenceBoundsAreValidatedAndSpendTheirID(t *testing.T) {
 	cases := []struct{ page, perPage int32 }{{0, 25}, {-1, 25}, {1, 0}, {1, 101}}
@@ -219,7 +206,7 @@ func TestPresenceBoundsAreValidatedAndSpendTheirID(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestPresenceBoundsAreValidatedAndSpendTheirID
 
 func TestPresenceQueryFailsWhileNotConnected(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -235,7 +222,7 @@ func TestPresenceQueryFailsWhileNotConnected(t *testing.T) {
 		_, err = segment(t, channel, "chat").PresenceList(t.Context(), 1, 25)
 		assertCode(t, err, ErrNotConnected)
 	})
-}
+} // end function TestPresenceQueryFailsWhileNotConnected
 
 func TestPresenceQueryWithADoneContextSendsNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -254,7 +241,7 @@ func TestPresenceQueryWithADoneContextSendsNothing(t *testing.T) {
 			t.Fatal(outcome.err)
 		}
 	})
-}
+} // end function TestPresenceQueryWithADoneContextSendsNothing
 
 func TestPresenceTimeoutLeavesTheConnectionAndDropsTheLateReply(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -295,21 +282,18 @@ func TestPresenceTimeoutLeavesTheConnectionAndDropsTheLateReply(t *testing.T) {
 			t.Fatalf("errors %v", errorsSeen.all())
 		}
 	})
-}
+} // end function TestPresenceTimeoutLeavesTheConnectionAndDropsTheLateReply
 
 func TestPresenceQueryTimeoutIsConfigurable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		channel, _, _ := connectTestChannel(t)
-		channel.client.presenceQueryTimeout = 2 * time.Second
-		start := time.Now()
-		_, err := segment(t, channel, "chat").PresenceList(t.Context(), 1, 25)
-		assertCode(t, err, ErrTimeout)
+		channel, _, _ := connectClientChannel(t, ClientOptions{PresenceQueryTimeout: 2 * time.Second})
+		err := expectPresenceTimeout(t, channel, 2*time.Second)
 
-		if elapsed := time.Since(start); elapsed != 2*time.Second {
-			t.Fatalf("timed out after %v", elapsed)
+		if want := "Presence query timed out after 2s."; err.Error() != want {
+			t.Fatalf("message %q, want %q", err.Error(), want)
 		}
 	})
-}
+} // end function TestPresenceQueryTimeoutIsConfigurable
 
 func TestCancellingASentQueryFreesTheSlot(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -332,7 +316,7 @@ func TestCancellingASentQueryFreesTheSlot(t *testing.T) {
 			t.Fatalf("got %+v and %v", outcome.page, outcome.err)
 		}
 	})
-}
+} // end function TestCancellingASentQueryFreesTheSlot
 
 func TestPresenceResponsesMatchByRequestIDAlone(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -347,7 +331,7 @@ func TestPresenceResponsesMatchByRequestIDAlone(t *testing.T) {
 			t.Fatalf("got %+v and %v", outcome.page, outcome.err)
 		}
 	})
-}
+} // end function TestPresenceResponsesMatchByRequestIDAlone
 
 func TestPresenceErrorNamingTheQueryRejectsItAtOnce(t *testing.T) {
 	for _, errorType := range []string{"InternalError", "PermissionDeniedError"} {
@@ -378,7 +362,7 @@ func TestPresenceErrorNamingTheQueryRejectsItAtOnce(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestPresenceErrorNamingTheQueryRejectsItAtOnce
 
 func TestPresenceErrorForAnotherQueryIsDropped(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -392,7 +376,7 @@ func TestPresenceErrorForAnotherQueryIsDropped(t *testing.T) {
 			t.Fatalf("got %v, errors %v", outcome.err, errorsSeen.all())
 		}
 	})
-}
+} // end function TestPresenceErrorForAnotherQueryIsDropped
 
 func TestPendingQueryFailsOnConnectionLossAndOnClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -420,7 +404,7 @@ func TestPendingQueryFailsOnConnectionLossAndOnClose(t *testing.T) {
 			t.Fatalf("message %q", err.Error())
 		}
 	})
-}
+} // end function TestPendingQueryFailsOnConnectionLossAndOnClose
 
 // A write the socket refuses breaks the connection: the query fails with the
 // connection, and its request id stays spent since it may have gone out.
@@ -441,7 +425,7 @@ func TestRefusedQueryWriteSpendsItsID(t *testing.T) {
 			t.Fatal(outcome.err)
 		}
 	})
-}
+} // end function TestRefusedQueryWriteSpendsItsID
 
 // The reply is routed by the goroutine running listeners, so a query made
 // inside one cannot complete: it times out, deterministically.
@@ -465,7 +449,7 @@ func TestPresenceQueryInsideAListenerTimesOut(t *testing.T) {
 
 		assertCode(t, outcomes.all()[0], ErrTimeout)
 	})
-}
+} // end function TestPresenceQueryInsideAListenerTimesOut
 
 func TestNoticesAreDeliveredInOrderWithWorkingRemoval(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -474,6 +458,7 @@ func TestNoticesAreDeliveredInOrderWithWorkingRemoval(t *testing.T) {
 		stopFirst := channel.Events().OnNotice(func(notice ServerNotice) {
 			seen.record("first " + strconv.FormatInt(notice.Timestamp, 10) + " " + string(notice.Payload))
 		})
+
 		channel.Events().OnNotice(func(notice ServerNotice) {
 			seen.record("second " + strconv.FormatInt(notice.Timestamp, 10) + " " + string(notice.Payload))
 		})
@@ -486,7 +471,7 @@ func TestNoticesAreDeliveredInOrderWithWorkingRemoval(t *testing.T) {
 			t.Fatalf("seen %v", seen.all())
 		}
 	})
-}
+} // end function TestNoticesAreDeliveredInOrderWithWorkingRemoval
 
 func TestPresenceEventsReachOnlyTheirSegment(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -506,7 +491,7 @@ func TestPresenceEventsReachOnlyTheirSegment(t *testing.T) {
 			t.Fatalf("chat %+v, lobby %+v", chat.all(), lobby.all())
 		}
 	})
-}
+} // end function TestPresenceEventsReachOnlyTheirSegment
 
 func TestPanickingNoticeAndPresenceListenersAreContained(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -529,4 +514,4 @@ func TestPanickingNoticeAndPresenceListenersAreContained(t *testing.T) {
 			}
 		}
 	})
-}
+} // end function TestPanickingNoticeAndPresenceListenersAreContained

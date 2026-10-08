@@ -22,7 +22,7 @@ func TestChannelReferenceCharacterClassEdges(t *testing.T) {
 			t.Errorf("%q accepted", character)
 		}
 	}
-}
+} // end function TestChannelReferenceCharacterClassEdges
 
 func TestErrorNameCharacterClassEdges(t *testing.T) {
 	for _, name := range []string{"A", "Z", "a", "z", "Az09_"} {
@@ -36,12 +36,12 @@ func TestErrorNameCharacterClassEdges(t *testing.T) {
 			t.Errorf("%q accepted", name)
 		}
 	}
-}
+} // end function TestErrorNameCharacterClassEdges
 
 func TestBulkLengthExactlyTheRemainingBytesNeedsItsTerminator(t *testing.T) {
 	_, err := decodeServerMessage([]byte("@SERVER_MSG\n:1\n$1\nx"))
 	assertProtocolError(t, err, "Missing bulk byte terminator.", "Payload", 15)
-}
+} // end function TestBulkLengthExactlyTheRemainingBytesNeedsItsTerminator
 
 func TestPresenceConnectionsCountTowardTheDepthLimit(t *testing.T) {
 	response := "@PRES_LIST_RESPONSE\n+s\n$1\n1\n;1\n;1\n;1\n;1\n;1\n*1\n*3\n+u\n+c\n:1\n"
@@ -53,7 +53,7 @@ func TestPresenceConnectionsCountTowardTheDepthLimit(t *testing.T) {
 	if _, err := decodeServerMessage([]byte(strings.Repeat("*1\n", 31) + response)); !errors.Is(err, ErrProtocol) {
 		t.Fatalf("connection at depth 32 accepted: %v", err)
 	}
-}
+} // end function TestPresenceConnectionsCountTowardTheDepthLimit
 
 func TestErrorResourcesCountTowardTheDepthLimit(t *testing.T) {
 	frame := func(levels int) string {
@@ -67,7 +67,7 @@ func TestErrorResourcesCountTowardTheDepthLimit(t *testing.T) {
 	if _, err := decodeServerMessage([]byte(frame(32))); !errors.Is(err, ErrProtocol) {
 		t.Fatalf("32 resource levels accepted: %v", err)
 	}
-}
+} // end function TestErrorResourcesCountTowardTheDepthLimit
 
 func TestEveryCommandIsMeasuredExactlyAgainstTheLimit(t *testing.T) {
 	// "@PUB\n$1\ns\n$1\nm\n$2097127\n" and the closing LF are 25 bytes.
@@ -100,7 +100,7 @@ func TestEveryCommandIsMeasuredExactlyAgainstTheLimit(t *testing.T) {
 	if _, err := encodePresenceList("s", 1, 25, requestID+"1"); !errors.Is(err, ErrConfiguration) {
 		t.Fatalf("presence query over the limit: %v", err)
 	}
-}
+} // end function TestEveryCommandIsMeasuredExactlyAgainstTheLimit
 
 func TestDeduplicationWindowHoldsExactly1024IDs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -125,7 +125,7 @@ func TestDeduplicationWindowHoldsExactly1024IDs(t *testing.T) {
 			t.Fatalf("%d delivered, want the evicted id delivered again", got)
 		}
 	})
-}
+} // end function TestDeduplicationWindowHoldsExactly1024IDs
 
 // A command sent exactly two seconds before a limit is still a suspect, and
 // recording a newer command does not expire it early.
@@ -146,7 +146,7 @@ func TestRateLimitSuspectWindowIncludesItsEdge(t *testing.T) {
 
 		assertCommands(t, socket, "@SUB\n$5\nalpha\n", "@SUB\n$4\nbeta\n", publishFrame("lobby", "early", "x"), publishFrame("lobby", "late", "y"))
 	})
-}
+} // end function TestRateLimitSuspectWindowIncludesItsEdge
 
 // With nothing to abandon, a quota limit schedules no probe, so the next
 // probe still starts at a minute.
@@ -174,7 +174,7 @@ func TestQuotaLimitWithNothingToAbandonSchedulesNoProbe(t *testing.T) {
 		synctest.Sleep(time.Millisecond)
 		assertCommands(t, socket, "@SUB\n$4\nchat\n")
 	})
-}
+} // end function TestQuotaLimitWithNothingToAbandonSchedulesNoProbe
 
 // Probing ends only once commands went strictly longer than the quiet span
 // without a limit.
@@ -216,7 +216,7 @@ func TestProbingEndsOnlyAfterTheQuietSpanHasPassed(t *testing.T) {
 			t.Fatalf("probe count %d, want probing ended", ended)
 		}
 	})
-}
+} // end function TestProbingEndsOnlyAfterTheQuietSpanHasPassed
 
 func TestPublishPastItsDeadlineIsATimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -233,4 +233,4 @@ func TestPublishPastItsDeadlineIsATimeout(t *testing.T) {
 			t.Fatalf("message %q", err.Error())
 		}
 	})
-}
+} // end function TestPublishPastItsDeadlineIsATimeout

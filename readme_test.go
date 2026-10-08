@@ -61,4 +61,4 @@ func TestReadmeSnippetsCompile(t *testing.T) {
 			t.Errorf("README snippet is not in any compiled file:\n%s", snippet)
 		}
 	}
-}
+} // end function TestReadmeSnippetsCompile

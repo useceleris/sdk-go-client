@@ -43,7 +43,7 @@ func TestCloseFromAListenerDuringCloseReturns(t *testing.T) {
 			t.Fatal("Close deadlocked")
 		}
 	})
-}
+} // end function TestCloseFromAListenerDuringCloseReturns
 
 // Frames handed to the writer before a limit, and written during the pause,
 // are not commands sent since it: a second frame for the same burst is the
@@ -74,7 +74,7 @@ func TestBacklogWrittenDuringThePauseIsNotANewEpisode(t *testing.T) {
 			}
 		}
 	})
-}
+} // end function TestBacklogWrittenDuringThePauseIsNotANewEpisode
 
 func TestCallerDeadlineWithItsOwnCauseIsATimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestCallerDeadlineWithItsOwnCauseIsATimeout(t *testing.T) {
 
 		assertCode(t, channel.Connect(ctx), ErrTimeout)
 	})
-}
+} // end function TestCallerDeadlineWithItsOwnCauseIsATimeout
 
 func TestConnectWithADoneContextNeverCallsTheProvider(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -100,7 +100,7 @@ func TestConnectWithADoneContextNeverCallsTheProvider(t *testing.T) {
 			t.Fatal("the provider was called")
 		}
 	})
-}
+} // end function TestConnectWithADoneContextNeverCallsTheProvider
 
 func TestPublishChecksTheConnectionBeforeTheMessageID(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestPublishChecksTheConnectionBeforeTheMessageID(t *testing.T) {
 		assertCode(t, channel.DefaultSegment().PublishWithMessageID(t.Context(), []byte("x"), ""), ErrNotConnected)
 		assertCode(t, channel.DefaultSegment().PublishWithMessageID(t.Context(), make([]byte, 3<<20), "m-1"), ErrNotConnected)
 	})
-}
+} // end function TestPublishChecksTheConnectionBeforeTheMessageID
 
 // A recovery listener registered inside the connected listener receives the
 // recovery event, as listeners registered before dispatch do in the reference.
@@ -130,7 +130,7 @@ func TestListenersRegisteredBeforeTheirTurnReceiveTheEvent(t *testing.T) {
 			t.Fatalf("recoveries %v", recoveries.all())
 		}
 	})
-}
+} // end function TestListenersRegisteredBeforeTheirTurnReceiveTheEvent
 
 // A listener's panic is reported before the next queued event.
 func TestListenerPanicIsReportedBeforeTheNextEvent(t *testing.T) {
@@ -142,6 +142,7 @@ func TestListenerPanicIsReportedBeforeTheNextEvent(t *testing.T) {
 				panic("listener failure")
 			}
 		})
+
 		channel.Events().OnRecovery(func(RecoveryEvent) { log.record("recovery") })
 		channel.Events().OnError(func(error) { log.record("error") })
 
@@ -152,7 +153,7 @@ func TestListenerPanicIsReportedBeforeTheNextEvent(t *testing.T) {
 			t.Fatalf("log %v", log.all())
 		}
 	})
-}
+} // end function TestListenerPanicIsReportedBeforeTheNextEvent
 
 func TestTimeoutMessagesNameTheirBound(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -170,7 +171,7 @@ func TestTimeoutMessagesNameTheirBound(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 	})
-}
+} // end function TestTimeoutMessagesNameTheirBound
 
 // A publish taken back from the writer is never resent by a later rate
 // limit.
@@ -203,7 +204,7 @@ func TestPublishTakenBackFromTheWriterIsNeverResent(t *testing.T) {
 			t.Fatalf("commands %q", got)
 		}
 	})
-}
+} // end function TestPublishTakenBackFromTheWriterIsNeverResent
 
 // A rate limit requeues a publish still waiting in the writer, so it has two
 // copies. Cancelling it takes back both: a publish reported cancelled never
@@ -234,7 +235,7 @@ func TestCancelTakesBackEveryCopyARateLimitLeft(t *testing.T) {
 		synctest.Sleep(time.Second)
 		assertCommands(t, socket, publishFrame("chat", "m-0", "x"), publishFrame("chat", "m-0", "x"))
 	})
-}
+} // end function TestCancelTakesBackEveryCopyARateLimitLeft
 
 // A publish whose context ends mid-write reports DeliveryUnknown, and such a
 // publish is never resent, even by a rate limit that follows.
@@ -257,7 +258,7 @@ func TestDeliveryUnknownPublishIsNeverResent(t *testing.T) {
 		synctest.Sleep(time.Second)
 		assertCommands(t, socket, publishFrame("chat", "m-1", "x"))
 	})
-}
+} // end function TestDeliveryUnknownPublishIsNeverResent
 
 // A panic inside routing, where the mutex is held, crashes the program with
 // its own message instead of hanging the channel. The scenario runs in a
@@ -286,7 +287,7 @@ func TestRoutingPanicCrashesInsteadOfHanging(t *testing.T) {
 	if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "injected routing failure") {
 		t.Fatalf("child did not crash with the panic (deadline passed: %v, error: %v):\n%s", ctx.Err() != nil, err, output)
 	}
-}
+} // end function TestRoutingPanicCrashesInsteadOfHanging
 
 // Taking a publish back from the writer frees room, so a publish waiting for
 // it goes out instead of waiting for unrelated traffic.
@@ -312,7 +313,7 @@ func TestPublishTakenBackFreesRoomForTheNext(t *testing.T) {
 			t.Fatalf("%d commands", len(got))
 		}
 	})
-}
+} // end function TestPublishTakenBackFreesRoomForTheNext
 
 // A listener ending the receive goroutine, as t.FailNow does, replaces the
 // socket rather than leaving it unread.
@@ -335,7 +336,7 @@ func TestListenerEndingTheReceiveGoroutineReplacesTheSocket(t *testing.T) {
 			t.Fatalf("seen %v, %d sockets, state %s", got, server.socketCount(), channel.State())
 		}
 	})
-}
+} // end function TestListenerEndingTheReceiveGoroutineReplacesTheSocket
 
 // The listeners after one that ends its goroutine still receive the event.
 func TestListenersAfterOneEndingItsGoroutineStillReceive(t *testing.T) {
@@ -347,6 +348,7 @@ func TestListenersAfterOneEndingItsGoroutineStillReceive(t *testing.T) {
 				runtime.Goexit()
 			}
 		})
+
 		channel.Events().OnStateChange(after.record)
 
 		channel.mutex.Lock()
@@ -361,19 +363,19 @@ func TestListenersAfterOneEndingItsGoroutineStillReceive(t *testing.T) {
 			t.Fatalf("after %v", got)
 		}
 	})
-}
+} // end function TestListenersAfterOneEndingItsGoroutineStillReceive
 
 // reentrantContext calls back into the channel from Err, as a context may.
 type reentrantContext struct {
 	context.Context
 	channel *Channel
-}
+} // end struct reentrantContext
 
 func (ctx reentrantContext) Err() error {
 	_ = ctx.channel.State()
 
 	return ctx.Context.Err()
-}
+} // end method Err
 
 // A caller's context is never read while the channel's mutex is held.
 func TestCallerContextsRunOutsideTheMutex(t *testing.T) {
@@ -398,4 +400,4 @@ func TestCallerContextsRunOutsideTheMutex(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-}
+} // end function TestCallerContextsRunOutsideTheMutex

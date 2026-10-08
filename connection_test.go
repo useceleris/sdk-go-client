@@ -24,7 +24,7 @@ type realServer struct {
 
 	// A silent server never reads, so it never answers a closing handshake.
 	silent bool
-}
+} // end struct realServer
 
 func newRealServer(t *testing.T, secure, silent bool) *realServer {
 	t.Helper()
@@ -79,11 +79,11 @@ func newRealServer(t *testing.T, secure, silent bool) *realServer {
 	t.Cleanup(server.Close)
 
 	return server
-}
+} // end function newRealServer
 
 func (server *realServer) baseURL() string {
 	return "ws" + strings.TrimPrefix(server.URL, "http")
-}
+} // end method baseURL
 
 func newRealChannel(t *testing.T, baseURL string) *Channel {
 	t.Helper()
@@ -108,7 +108,7 @@ func newRealChannel(t *testing.T, baseURL string) *Channel {
 	t.Cleanup(channel.Close)
 
 	return channel
-}
+} // end function newRealChannel
 
 func (server *realServer) readCommand(t *testing.T) string {
 	t.Helper()
@@ -121,7 +121,7 @@ func (server *realServer) readCommand(t *testing.T) string {
 
 		return ""
 	}
-}
+} // end method readCommand
 
 func TestRealSocketRoundTrip(t *testing.T) {
 	server := newRealServer(t, false, false)
@@ -187,7 +187,7 @@ func TestRealSocketRoundTrip(t *testing.T) {
 	if channel.State() != StateConnected {
 		t.Fatalf("state %s", channel.State())
 	}
-}
+} // end function TestRealSocketRoundTrip
 
 // SEC-02: certificates are verified against the system roots, and an
 // application loosening http.DefaultTransport does not loosen the SDK.
@@ -205,7 +205,7 @@ func TestRealSocketVerifiesCertificates(t *testing.T) {
 	if strings.Contains(err.Error(), "payload-1") || strings.Contains(err.Error(), "signature-1") || errors.Unwrap(err) != nil {
 		t.Fatalf("error leaks the credential URL: %v", err)
 	}
-}
+} // end function TestRealSocketVerifiesCertificates
 
 func TestRealSocketRefusedHandshakeIsTransport(t *testing.T) {
 	server := newRealServer(t, false, false)
@@ -227,7 +227,7 @@ func TestRealSocketRefusedHandshakeIsTransport(t *testing.T) {
 	if strings.Contains(err.Error(), "payload-1") || strings.Contains(err.Error(), "404") {
 		t.Fatalf("error leaks handshake detail: %v", err)
 	}
-}
+} // end function TestRealSocketRefusedHandshakeIsTransport
 
 // Close stays bounded against a peer that never answers the closing
 // handshake.
@@ -246,4 +246,50 @@ func TestRealSocketCloseIsBoundedAgainstASilentPeer(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 6*time.Second || channel.State() != StateClosed {
 		t.Fatalf("closed after %v in state %s", elapsed, channel.State())
 	}
-}
+} // end function TestRealSocketCloseIsBoundedAgainstASilentPeer
+
+// HEARTBEAT-01 relies on this: a ping whose pong does not arrive in time fails
+// alone, and the socket stays up.
+func TestRealSocketOutlivesAnUnansweredPing(t *testing.T) {
+	server := newRealServer(t, false, true)
+	channel := newRealChannel(t, server.baseURL())
+
+	if err := channel.Connect(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := <-server.accepted
+
+	channel.mutex.Lock()
+	clientSocket := channel.connection.socket
+	channel.mutex.Unlock()
+
+	// The silent server reads nothing, so it answers no ping.
+	pingContext, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+
+	if err := clientSocket.ping(pingContext); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ping returned %v", err)
+	}
+
+	// Reading now answers the ping late, then receives the publish.
+	go func() {
+		for {
+			_, data, err := conn.Read(context.Background())
+
+			if err != nil {
+				return
+			}
+
+			server.commands <- string(data)
+		}
+	}()
+
+	if err := segment(t, channel, "chat").PublishWithMessageID(t.Context(), []byte("hi"), "m-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if command := server.readCommand(t); command != publishFrame("chat", "m-1", "hi") || channel.State() != StateConnected {
+		t.Fatalf("server read %q in state %s", command, channel.State())
+	}
+} // end function TestRealSocketOutlivesAnUnansweredPing

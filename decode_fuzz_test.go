@@ -50,7 +50,7 @@ func isDecoderReason(message string) bool {
 	}
 
 	return false
-}
+} // end function isDecoderReason
 
 // FuzzDecode checks that no input panics the decoder, and that every failure
 // is a located protocol error that repeats nothing it received (WIRE-03,
@@ -85,4 +85,4 @@ func FuzzDecode(f *testing.F) {
 			t.Fatalf("unexpected reason %q", sdkError.Message)
 		}
 	})
-}
+} // end function FuzzDecode

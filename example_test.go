@@ -16,7 +16,7 @@ import (
 // signs credentials with the server SDK.
 func fetchCredentials(context.Context, celeris.CredentialRequest) (celeris.Credentials, error) {
 	return celeris.Credentials{}, errors.New("call your credential endpoint here")
-}
+} // end function fetchCredentials
 
 func Example() {
 	client, err := celeris.NewClient(celeris.ClientOptions{CredentialProvider: fetchCredentials})
@@ -56,7 +56,7 @@ func Example() {
 	if err := chat.Publish(ctx, celeris.TextPayload("hello")); err != nil {
 		log.Fatal(err)
 	}
-}
+} // end function Example
 
 // Listeners run one at a time and never under an SDK lock, so they may call
 // back into the channel. A presence query's reply is routed by the goroutine
@@ -80,7 +80,7 @@ func ExampleSegment_PresenceList() {
 			fmt.Println(page.Total, "connections present")
 		}()
 	})
-}
+} // end function ExampleSegment_PresenceList
 
 // A state listener sees every transition, in the order it happened.
 func ExampleChannelEventHandler_OnStateChange() {
@@ -94,7 +94,7 @@ func ExampleChannelEventHandler_OnStateChange() {
 			fmt.Println("gave up; call Connect to try again")
 		}
 	})
-}
+} // end function ExampleChannelEventHandler_OnStateChange
 
 // Failures no caller is waiting for arrive here: errors the server sent, and
 // the SDK's own, such as a message that could not be decoded.
@@ -110,7 +110,19 @@ func ExampleChannelEventHandler_OnError() {
 
 		fmt.Println("sdk:", err)
 	})
-}
+} // end function ExampleChannelEventHandler_OnError
+
+// A channel listener sees every delivery, from any segment, after that
+// segment's own listeners.
+func ExampleChannelEventHandler_OnMessage() {
+	var channel *celeris.Channel // from client.Channel("room-42")
+
+	removeChannelListener := channel.Events().OnMessage(func(payload []byte, metadata celeris.MessageMetadata) {
+		fmt.Println(metadata.SegmentID, string(payload))
+	})
+
+	defer removeChannelListener()
+} // end function ExampleChannelEventHandler_OnMessage
 
 // Listeners receive the payload, then its metadata. Registering returns a
 // function that removes the listener; a subscription is cancelled on its own.
@@ -131,11 +143,11 @@ func ExampleSegment_OnMessage() {
 	}
 
 	defer subscription.Cancel()
-}
+} // end function ExampleSegment_OnMessage
 
 // Returning nil means the local socket accepted the bytes: there is no
-// receipt. Reuse a message id only to resend the same message; receivers drop
-// the copy.
+// receipt. ErrDeliveryUnknown means acceptance is uncertain, and the SDK never
+// resends such a publish.
 func ExampleSegment_PublishWithMessageID() {
 	var chat *celeris.Segment // from channel.Segment("chat")
 
@@ -148,16 +160,16 @@ func ExampleSegment_PublishWithMessageID() {
 	case err == nil:
 		fmt.Println("handed to the socket")
 	case errors.Is(err, celeris.ErrBackpressure):
-		fmt.Println("64 publishes are waiting; retry later")
+		fmt.Println("the publish queue is full (PublishQueueSize, 64 by default); retry later")
 	case errors.Is(err, celeris.ErrDeliveryUnknown):
-		fmt.Println("may or may not have been sent; resend with the same id")
+		fmt.Println("may or may not have been sent; do not resend blindly")
 	default:
 		fmt.Println("not sent:", err)
 	}
-}
+} // end function ExampleSegment_PublishWithMessageID
 
-// A presence subscription delivers joins and leaves. It also keeps the
-// segment joined for messages.
+// A presence subscription delivers joins and leaves. It delivers no
+// messages: watching presence is not membership.
 func ExampleSegment_SubscribePresence() {
 	var chat *celeris.Segment // from channel.Segment("chat")
 
@@ -176,7 +188,7 @@ func ExampleSegment_SubscribePresence() {
 	}
 
 	defer presence.Cancel()
-}
+} // end function ExampleSegment_SubscribePresence
 
 // Read every page of a segment's presence.
 func ExampleSegment_PresenceList_allPages() {
@@ -199,7 +211,7 @@ func ExampleSegment_PresenceList_allPages() {
 			break
 		}
 	}
-}
+} // end function ExampleSegment_PresenceList_allPages
 
 // Encode a typed value as JSON, and read it back in a listener.
 func ExampleJSONPayload_segment() {
@@ -230,7 +242,7 @@ func ExampleJSONPayload_segment() {
 	if err := chat.Publish(ctx, payload); err != nil {
 		log.Fatal(err)
 	}
-}
+} // end function ExampleJSONPayload_segment
 
 func ExampleChannelEventHandler_OnRecovery() {
 	var channel *celeris.Channel // from client.Channel("room-42")
@@ -239,7 +251,7 @@ func ExampleChannelEventHandler_OnRecovery() {
 		// Replay is a bounded window: gaps and duplicates are always possible.
 		fmt.Println("recovered on retry", event.RetryIndex)
 	})
-}
+} // end function ExampleChannelEventHandler_OnRecovery
 
 // Match the SDK's own failures by code, and the server's by type.
 func ExampleErrorCode() {
@@ -263,7 +275,7 @@ func ExampleErrorCode() {
 	// Output:
 	// slow down and retry
 	// shrink the payload
-}
+} // end function ExampleErrorCode
 
 func ExampleJSONPayload() {
 	payload, err := celeris.JSONPayload(map[string]any{"text": "<hi>", "count": 2})
@@ -274,7 +286,7 @@ func ExampleJSONPayload() {
 
 	fmt.Println(string(payload))
 	// Output: {"count":2,"text":"<hi>"}
-}
+} // end function ExampleJSONPayload
 
 func ExampleReadJSON() {
 	type message struct {
@@ -294,7 +306,7 @@ func ExampleReadJSON() {
 	// Output:
 	// hello
 	// Payload is valid UTF-8 but not valid JSON.
-}
+} // end function ExampleReadJSON
 
 // Wrap any serializer in the shape of the built-in helpers. Its own errors
 // pass through unchanged.
@@ -334,7 +346,7 @@ func ExampleNewPayloadCodec() {
 
 	fmt.Println(decoded.X, decoded.Y)
 	// Output: 3 4
-}
+} // end function ExampleNewPayloadCodec
 
 func ExampleReadText() {
 	text, err := celeris.ReadText(celeris.TextPayload("héllo"))
@@ -345,7 +357,7 @@ func ExampleReadText() {
 	// Output:
 	// héllo <nil>
 	// Payload is not valid UTF-8, so it cannot be read as text.
-}
+} // end function ExampleReadText
 
 func ExampleCredentials() {
 	credentials := celeris.Credentials{Payload: "opaque", Signature: "opaque"}
@@ -354,4 +366,4 @@ func ExampleCredentials() {
 	// Output:
 	// celeris.Credentials{redacted}
 	// celeris.Credentials{redacted}
-}
+} // end function ExampleCredentials

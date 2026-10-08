@@ -19,7 +19,7 @@ func exhaustRateLimit(socket *fakeSocket) {
 		receiveAll(socket, rateLimitFrame())
 		synctest.Sleep(time.Second)
 	}
-}
+} // end function exhaustRateLimit
 
 func TestRateLimitPausesThenResendsSubscriptionsBeforePublishes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -55,27 +55,45 @@ func TestRateLimitPausesThenResendsSubscriptionsBeforePublishes(t *testing.T) {
 
 		assertCommands(t, socket, "@SUB\n$4\nchat\n", "@PRES_SUB\n$4\nchat\n", publishFrame("lobby", "m-1", "a"), publishFrame("lobby", "m-2", "b"))
 	})
-}
+} // end function TestRateLimitPausesThenResendsSubscriptionsBeforePublishes
 
-func TestRateLimitResendsAPublishOnceAndOnlyWithinTheWindow(t *testing.T) {
+func TestRateLimitResendsACommandSentExactly2000msBeforeNotOneSent2001msBefore(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		channel, _, socket := connectTestChannel(t)
 		chat := segment(t, channel, "chat")
 		publish(t, chat, "old", "old")
-		synctest.Sleep(2001 * time.Millisecond)
-		publish(t, chat, "new", "new")
+		synctest.Sleep(time.Millisecond)
+		publish(t, chat, "edge", "edge")
+		synctest.Sleep(2000 * time.Millisecond)
 		socket.clearCommands()
 
 		receiveAll(socket, rateLimitFrame())
 		synctest.Sleep(time.Second)
-		assertCommands(t, socket, publishFrame("chat", "new", "new"))
+		assertCommands(t, socket, publishFrame("chat", "edge", "edge"))
+	})
+} // end function TestRateLimitResendsACommandSentExactly2000msBeforeNotOneSent2001msBefore
+
+func TestRateLimitResendsAPublishByteForByteWithItsOriginalIDOnlyOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+
+		if err := segment(t, channel, "chat").Publish(t.Context(), []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+
+		original := socket.commands()
+		socket.clearCommands()
+
+		receiveAll(socket, rateLimitFrame())
+		synctest.Sleep(time.Second)
+		assertCommands(t, socket, original...)
 
 		socket.clearCommands()
 		receiveAll(socket, rateLimitFrame())
-		synctest.Sleep(30 * time.Second)
+		synctest.Sleep(31 * time.Second)
 		assertCommands(t, socket)
 	})
-}
+} // end function TestRateLimitResendsAPublishByteForByteWithItsOriginalIDOnlyOnce
 
 func TestSubscriptionToggledWhilePausedSendsOneCommand(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -86,7 +104,7 @@ func TestSubscriptionToggledWhilePausedSendsOneCommand(t *testing.T) {
 		synctest.Sleep(time.Second)
 		assertCommands(t, socket, "@SUB\n$4\nchat\n")
 	})
-}
+} // end function TestSubscriptionToggledWhilePausedSendsOneCommand
 
 func TestRateLimitBacksOffThenStartsOverAfterAQuietWindow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -95,7 +113,12 @@ func TestRateLimitBacksOffThenStartsOverAfterAQuietWindow(t *testing.T) {
 		subscribe(t, segment(t, channel, "chat"))
 		synctest.Wait()
 
-		for _, pause := range []time.Duration{1500 * time.Millisecond, 2000 * time.Millisecond} {
+		// 1 s plus the reconnect delay for the streak index, which is capped at
+		// 30 s. The seventh limit is the first to reach the cap.
+		pauses := []time.Duration{1500, 2000, 3000, 5000, 9000, 17000, 31000}
+
+		for _, pause := range pauses {
+			pause *= time.Millisecond
 			socket.clearCommands()
 			receiveAll(socket, rateLimitFrame())
 			synctest.Sleep(pause - time.Millisecond)
@@ -104,15 +127,18 @@ func TestRateLimitBacksOffThenStartsOverAfterAQuietWindow(t *testing.T) {
 			assertCommands(t, socket, "@SUB\n$4\nchat\n")
 		}
 
-		synctest.Sleep(10 * time.Second)
+		// Past the last pause and its suspect window, the streak starts over.
+		synctest.Sleep(40 * time.Second)
 		subscribe(t, segment(t, channel, "lobby"))
 		synctest.Wait()
 		socket.clearCommands()
 		receiveAll(socket, rateLimitFrame())
-		synctest.Sleep(1500 * time.Millisecond)
+		synctest.Sleep(1499 * time.Millisecond)
+		assertCommands(t, socket)
+		synctest.Sleep(time.Millisecond)
 		assertCommands(t, socket, "@SUB\n$5\nlobby\n")
 	})
-}
+} // end function TestRateLimitBacksOffThenStartsOverAfterAQuietWindow
 
 func TestCancellingAQueuedPublishWithdrawsIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -135,29 +161,47 @@ func TestCancellingAQueuedPublishWithdrawsIt(t *testing.T) {
 		synctest.Sleep(time.Second)
 		assertCommands(t, socket)
 	})
-}
+} // end function TestCancellingAQueuedPublishWithdrawsIt
 
-func TestQueuedPublishesFailWhenTheConnectionDrops(t *testing.T) {
+// QUEUE-01: a publish waiting out a rate-limit pause was never handed to the
+// socket, so it waits across the reconnect, which ends the pause.
+func TestPublishWaitingOutAPauseIsSentAfterTheReconnect(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		channel, server, socket := connectTestChannel(t)
 		receiveAll(socket, rateLimitFrame())
 		pending := publishAsync(t, segment(t, channel, "chat"), "m-1", "x")
 		synctest.Wait()
-		server.set(func(server *fakeServer) { server.blockDials = true })
 		socket.drop()
+		synctest.Wait()
 
-		err := <-pending
-		assertCode(t, err, ErrNotConnected)
-
-		if want := "Connection lost before the publish was sent; publish again once the channel reconnects."; err.Error() != want {
-			t.Fatalf("message %q", err.Error())
+		if err := <-pending; err != nil {
+			t.Fatal(err)
 		}
 
-		if channel.State() != StateReconnecting {
+		assertCommands(t, socket)
+		assertCommands(t, server.socket(-1), publishFrame("chat", "m-1", "x"))
+	})
+} // end function TestPublishWaitingOutAPauseIsSentAfterTheReconnect
+
+// QUEUE-01: a publish handed to a socket is never sent again after a
+// reconnect, not even the copy a rate limit queued for resending.
+func TestRateLimitResendCopyIsNotSentAfterTheReconnect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, server, socket := connectTestChannel(t)
+		publish(t, segment(t, channel, "chat"), "m-1", "x")
+		receiveAll(socket, rateLimitFrame())
+		socket.drop()
+		synctest.Wait()
+
+		if channel.State() != StateConnected {
 			t.Fatalf("state %s", channel.State())
 		}
+
+		synctest.Sleep(time.Minute)
+		assertCommands(t, socket, publishFrame("chat", "m-1", "x"))
+		assertCommands(t, server.socket(-1))
 	})
-}
+} // end function TestRateLimitResendCopyIsNotSentAfterTheReconnect
 
 func TestSubscriptionChangeNeverOvertakesAnEarlierPublishToItsSegment(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -179,7 +223,7 @@ func TestSubscriptionChangeNeverOvertakesAnEarlierPublishToItsSegment(t *testing
 		// Publishing joins the segment, so the UNSUB has to follow it.
 		assertCommands(t, socket, publishFrame("chat", "m-1", "x"), "@UNSUB\n$4\nchat\n")
 	})
-}
+} // end function TestSubscriptionChangeNeverOvertakesAnEarlierPublishToItsSegment
 
 func TestSubscriptionChangeWaitsOnlyForPublishesQueuedBeforeIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -201,16 +245,52 @@ func TestSubscriptionChangeWaitsOnlyForPublishesQueuedBeforeIt(t *testing.T) {
 
 		assertCommands(t, socket, publishFrame("chat", "m-1", "1"), "@SUB\n$4\nchat\n", publishFrame("chat", "m-2", "2"))
 	})
-}
+} // end function TestSubscriptionChangeWaitsOnlyForPublishesQueuedBeforeIt
 
-func TestQuotaProbeResendsDroppedSubscriptionsOnADoublingSchedule(t *testing.T) {
+// The first eight limits in a row each resend; from the ninth, recent
+// publishes are dropped and recent subscriptions wait for the probe.
+func TestDropsRecentPublishesAndKeepsSubscriptionsForTheProbeAfterEightLimitsInARow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		lobby := segment(t, channel, "lobby")
+		subscribe(t, segment(t, channel, "chat"))
+		synctest.Wait()
+
+		for range 7 {
+			socket.clearCommands()
+			receiveAll(socket, rateLimitFrame())
+			synctest.Sleep(time.Second)
+			assertCommands(t, socket, "@SUB\n$4\nchat\n")
+		}
+
+		// The eighth still resends.
+		publish(t, lobby, "m-8", "x")
+		socket.clearCommands()
+		receiveAll(socket, rateLimitFrame())
+		synctest.Sleep(time.Second)
+		assertCommands(t, socket, "@SUB\n$4\nchat\n", publishFrame("lobby", "m-8", "x"))
+
+		// The ninth does not.
+		publish(t, lobby, "m-9", "x")
+		socket.clearCommands()
+		receiveAll(socket, rateLimitFrame())
+		synctest.Sleep(time.Minute - time.Millisecond)
+		assertCommands(t, socket)
+		synctest.Sleep(time.Millisecond)
+		assertCommands(t, socket, "@SUB\n$4\nchat\n")
+	})
+} // end function TestDropsRecentPublishesAndKeepsSubscriptionsForTheProbeAfterEightLimitsInARow
+
+func TestQuotaProbeResendsDroppedSubscriptionsOnADoublingScheduleUpToOneHour(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		channel, _, socket := connectTestChannel(t)
 		subscribe(t, segment(t, channel, "chat"))
 		synctest.Wait()
 		exhaustRateLimit(socket)
 
-		for _, delay := range []time.Duration{time.Minute, 2 * time.Minute} {
+		delays := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 32 * time.Minute, time.Hour, time.Hour}
+
+		for _, delay := range delays {
 			socket.clearCommands()
 			receiveAll(socket, rateLimitFrame())
 			synctest.Sleep(delay - time.Millisecond)
@@ -219,7 +299,7 @@ func TestQuotaProbeResendsDroppedSubscriptionsOnADoublingSchedule(t *testing.T) 
 			assertCommands(t, socket, "@SUB\n$4\nchat\n")
 		}
 	})
-}
+} // end function TestQuotaProbeResendsDroppedSubscriptionsOnADoublingScheduleUpToOneHour
 
 func TestResendingReturnsOnceCommandsGoAWindowWithoutALimit(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -238,7 +318,7 @@ func TestResendingReturnsOnceCommandsGoAWindowWithoutALimit(t *testing.T) {
 		synctest.Sleep(time.Second)
 		assertCommands(t, socket, "@SUB\n$5\nlobby\n")
 	})
-}
+} // end function TestResendingReturnsOnceCommandsGoAWindowWithoutALimit
 
 func TestQuotaProbingSurvivesAReconnect(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -260,7 +340,7 @@ func TestQuotaProbingSurvivesAReconnect(t *testing.T) {
 		synctest.Sleep(time.Millisecond)
 		assertCommands(t, restored, "@SUB\n$4\nchat\n")
 	})
-}
+} // end function TestQuotaProbingSurvivesAReconnect
 
 func TestSeveralFramesForOneBurstCountOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -284,7 +364,7 @@ func TestSeveralFramesForOneBurstCountOnce(t *testing.T) {
 		synctest.Sleep(time.Millisecond)
 		assertCommands(t, socket, "@SUB\n$4\nchat\n")
 	})
-}
+} // end function TestSeveralFramesForOneBurstCountOnce
 
 func TestLateReportWhileProbingKeepsTheQuotaExhausted(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -305,7 +385,7 @@ func TestLateReportWhileProbingKeepsTheQuotaExhausted(t *testing.T) {
 		synctest.Sleep(time.Millisecond)
 		assertCommands(t, socket, "@SUB\n$4\nchat\n")
 	})
-}
+} // end function TestLateReportWhileProbingKeepsTheQuotaExhausted
 
 func TestLimitLongAfterAcceptedTrafficEndsProbing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -330,7 +410,7 @@ func TestLimitLongAfterAcceptedTrafficEndsProbing(t *testing.T) {
 		synctest.Sleep(time.Second)
 		assertCommands(t, socket, "@SUB\n$5\nlobby\n")
 	})
-}
+} // end function TestLimitLongAfterAcceptedTrafficEndsProbing
 
 func TestSentPresenceQueryProvesTheQuotaReturned(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -351,26 +431,30 @@ func TestSentPresenceQueryProvesTheQuotaReturned(t *testing.T) {
 		synctest.Wait()
 		assertCommands(t, socket, "@SUB\n$5\nlobby\n", "@SUB\n$4\nchat\n")
 	})
-}
+} // end function TestSentPresenceQueryProvesTheQuotaReturned
 
 func TestRateLimitResendsAtMostTheLast64Publishes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		channel, _, socket := connectTestChannel(t)
 		lobby := segment(t, channel, "lobby")
 
-		for index := range 70 {
-			publish(t, lobby, "m-"+strconv.Itoa(index), "x")
+		for index := 1; index <= 65; index++ {
+			publish(t, lobby, "m-"+strconv.Itoa(index), strconv.Itoa(index))
 		}
 
 		socket.clearCommands()
 		receiveAll(socket, rateLimitFrame())
 		synctest.Sleep(time.Second)
 
-		if commands := socket.commands(); len(commands) != 64 || commands[0] != publishFrame("lobby", "m-6", "x") {
-			t.Fatalf("%d commands, first %q", len(commands), commands[0])
+		var want []string
+
+		for index := 2; index <= 65; index++ {
+			want = append(want, publishFrame("lobby", "m-"+strconv.Itoa(index), strconv.Itoa(index)))
 		}
+
+		assertCommands(t, socket, want...)
 	})
-}
+} // end function TestRateLimitResendsAtMostTheLast64Publishes
 
 func TestPresenceQueryWhilePausedIsBackpressure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -384,7 +468,7 @@ func TestPresenceQueryWhilePausedIsBackpressure(t *testing.T) {
 			t.Fatalf("message %q", err.Error())
 		}
 	})
-}
+} // end function TestPresenceQueryWhilePausedIsBackpressure
 
 func TestRestoredSubscriptionsAreResentAfterARateLimit(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -403,7 +487,7 @@ func TestRestoredSubscriptionsAreResentAfterARateLimit(t *testing.T) {
 			t.Fatalf("state %s", channel.State())
 		}
 	})
-}
+} // end function TestRestoredSubscriptionsAreResentAfterARateLimit
 
 func TestRefusedSubscriptionWriteReplacesTheSocket(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -422,4 +506,4 @@ func TestRefusedSubscriptionWriteReplacesTheSocket(t *testing.T) {
 		assertStates(t, states, StateReconnecting, StateConnected)
 		assertCommands(t, server.socket(-1), "@SUB\n$4\nchat\n")
 	})
-}
+} // end function TestRefusedSubscriptionWriteReplacesTheSocket

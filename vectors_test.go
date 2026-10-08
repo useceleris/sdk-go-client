@@ -14,7 +14,7 @@ type encodingVector struct {
 	name     string
 	encode   func() ([]byte, error)
 	expected []byte
-}
+} // end struct encodingVector
 
 func join(parts ...[]byte) []byte {
 	var joined []byte
@@ -24,7 +24,7 @@ func join(parts ...[]byte) []byte {
 	}
 
 	return joined
-}
+} // end function join
 
 func encodingVectors() []encodingVector {
 	vectors := []encodingVector{
@@ -97,13 +97,13 @@ func encodingVectors() []encodingVector {
 	}
 
 	return vectors
-}
+} // end function encodingVectors
 
 type decodingVector struct {
 	name     string
 	data     []byte
 	expected serverMessage
-}
+} // end struct decodingVector
 
 func decodingVectors() []decodingVector {
 	vectors := []decodingVector{
@@ -335,7 +335,7 @@ func decodingVectors() []decodingVector {
 	}
 
 	return vectors
-}
+} // end function decodingVectors
 
 var invalidUTF8Vectors = [][]byte{
 	{0x80},
@@ -428,7 +428,7 @@ func malformedVectors() [][]byte {
 	}
 
 	return vectors
-}
+} // end function malformedVectors
 
 // Ill-formed text must be refused rather than collapse onto the valid
 // replacement character. Go strings are bytes, so where the reference tests

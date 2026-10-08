@@ -69,4 +69,4 @@ func TestSocketsProbeWhenIdle(t *testing.T) {
 			t.Fatalf("%s is %d, want %d", name, value, want[name])
 		}
 	}
-}
+} // end function TestSocketsProbeWhenIdle

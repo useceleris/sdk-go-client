@@ -45,7 +45,7 @@ func TestListenersMayCallBackIntoTheChannel(t *testing.T) {
 
 		assertCommands(t, socket, publishFrame("chat", "echo-id-1", "echo"), "@SUB\n$4\nchat\n", "@UNSUB\n$4\nchat\n")
 	})
-}
+} // end function TestListenersMayCallBackIntoTheChannel
 
 func TestCloseFromInsideAListener(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -56,6 +56,7 @@ func TestCloseFromInsideAListener(t *testing.T) {
 			channel.Close()
 			log.record("closed in listener")
 		})
+
 		segment(t, channel, "chat").OnMessage(func([]byte, MessageMetadata) { log.record("message") })
 
 		socket.receive("*2\n@SERVER_MSG\n:1\n$0\n\n" + messageFrame("chat", "id-1", "x"))
@@ -66,7 +67,7 @@ func TestCloseFromInsideAListener(t *testing.T) {
 			t.Fatalf("log %v", log.all())
 		}
 	})
-}
+} // end function TestCloseFromInsideAListener
 
 func TestConnectFromInsideAFailedStateListener(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -91,7 +92,7 @@ func TestConnectFromInsideAFailedStateListener(t *testing.T) {
 			t.Fatalf("state %s", channel.State())
 		}
 	})
-}
+} // end function TestConnectFromInsideAFailedStateListener
 
 func TestEventsFollowTheOrderStateChanged(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -108,7 +109,7 @@ func TestEventsFollowTheOrderStateChanged(t *testing.T) {
 			t.Fatalf("log %v", log.all())
 		}
 	})
-}
+} // end function TestEventsFollowTheOrderStateChanged
 
 // A listener that ends its goroutine, as t.FailNow does, must not leave the
 // channel marked as delivering.
@@ -141,7 +142,7 @@ func TestListenerEndingItsGoroutineLeavesDispatchUsable(t *testing.T) {
 			t.Fatalf("draining %v, seen %v", draining, seen.all())
 		}
 	})
-}
+} // end function TestListenerEndingItsGoroutineLeavesDispatchUsable
 
 // LIFE-04 and RES-03: concurrent use from many goroutines is safe, and every
 // goroutine the channel started ends once it closes.
@@ -181,7 +182,7 @@ func TestConcurrentUseIsSafe(t *testing.T) {
 			t.Fatalf("state %s", channel.State())
 		}
 	})
-}
+} // end function TestConcurrentUseIsSafe
 
 func TestRepeatedConnectAndCloseUnderLoad(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -201,6 +202,10 @@ func TestRepeatedConnectAndCloseUnderLoad(t *testing.T) {
 			}()
 
 			channel.Close()
+
+			if channel.State() != StateClosed || !socket.isClosed() {
+				t.Fatalf("state %s, socket closed %v", channel.State(), socket.isClosed())
+			}
 		}
 	})
-}
+} // end function TestRepeatedConnectAndCloseUnderLoad

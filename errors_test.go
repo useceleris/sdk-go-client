@@ -22,7 +22,7 @@ func TestErrorsMatchTheirCode(t *testing.T) {
 	if ErrTimeout.Error() != "Timeout" {
 		t.Fatalf("code text %q", ErrTimeout.Error())
 	}
-}
+} // end function TestErrorsMatchTheirCode
 
 func TestProtocolErrorsLocateTheirField(t *testing.T) {
 	err := protocolError("Invalid UTF-8 text.", "TokenReference", 5)
@@ -30,7 +30,7 @@ func TestProtocolErrorsLocateTheirField(t *testing.T) {
 	if want := "Invalid UTF-8 text. Field: TokenReference, byte offset 5."; err.Error() != want {
 		t.Fatalf("text %q, want %q", err.Error(), want)
 	}
-}
+} // end function TestProtocolErrorsLocateTheirField
 
 func TestServerErrorsCarryNoCode(t *testing.T) {
 	var err error = &ServerError{Type: RateLimitError, Message: "Rate limit exceeded"}
@@ -44,4 +44,4 @@ func TestServerErrorsCarryNoCode(t *testing.T) {
 	if err.Error() != "RateLimitError: Rate limit exceeded" {
 		t.Fatalf("text %q", err.Error())
 	}
-}
+} // end function TestServerErrorsCarryNoCode

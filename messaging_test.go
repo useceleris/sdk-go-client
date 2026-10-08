@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 )
 
 // receiveAll delivers each frame and waits until the channel has handled it.
@@ -18,14 +19,14 @@ func receiveAll(socket *fakeSocket, frames ...string) {
 		socket.receive(frame)
 		synctest.Wait()
 	}
-}
+} // end function receiveAll
 
 func recordMessageIDs(handle *Segment) *recorder[string] {
 	identifiers := &recorder[string]{}
 	handle.OnMessage(func(_ []byte, metadata MessageMetadata) { identifiers.record(metadata.MessageID) })
 
 	return identifiers
-}
+} // end function recordMessageIDs
 
 func TestSegmentsShareOneInterestCount(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -45,7 +46,40 @@ func TestSegmentsShareOneInterestCount(t *testing.T) {
 		assertCommands(t, socket, "@SUB\n$4\nchat\n", "@UNSUB\n$4\nchat\n")
 		channel.Close()
 	})
-}
+} // end function TestSegmentsShareOneInterestCount
+
+func TestSegmentsMultiplexOverOneSocketAndAnotherChannelOpensAnother(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, server, socket := connectTestChannel(t)
+		subscribe(t, segment(t, channel, "alpha"))
+		subscribe(t, segment(t, channel, "beta"))
+		publish(t, segment(t, channel, "gamma"), "m-1", "x")
+		synctest.Wait()
+
+		if server.socketCount() != 1 || len(socket.commands()) != 3 {
+			t.Fatalf("%d sockets, commands %q", server.socketCount(), socket.commands())
+		}
+
+		other, err := channel.client.Channel("room-2")
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(other.Close)
+
+		if err := other.Connect(t.Context()); err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+
+		if server.socketCount() != 2 {
+			t.Fatalf("%d sockets, want 2", server.socketCount())
+		}
+
+		other.Close()
+		channel.Close()
+	})
+} // end function TestSegmentsMultiplexOverOneSocketAndAnotherChannelOpensAnother
 
 func TestDefaultSegmentIsNeverSubscribed(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -55,7 +89,7 @@ func TestDefaultSegmentIsNeverSubscribed(t *testing.T) {
 		assertCommands(t, socket)
 		channel.Close()
 	})
-}
+} // end function TestDefaultSegmentIsNeverSubscribed
 
 func TestPublishCompletesOnLocalAcceptance(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -76,29 +110,39 @@ func TestPublishCompletesOnLocalAcceptance(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestPublishCompletesOnLocalAcceptance
 
-func TestPublishFailsWhileNotConnected(t *testing.T) {
+// QUEUE-01: with no recovery in progress, a publish has nothing to wait for.
+func TestPublishFailsWhileNoRecoveryIsInProgress(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		idle, _ := newTestChannel(t)
-		assertCode(t, idle.DefaultSegment().Publish(t.Context(), []byte("x")), ErrNotConnected)
+		channel, server := newTestChannel(t)
+		lobby := channel.DefaultSegment()
+		assertCode(t, lobby.Publish(t.Context(), []byte("before connect")), ErrNotConnected)
 
-		channel, server, socket := connectTestChannel(t)
-		chat := segment(t, channel, "chat")
-		server.set(func(server *fakeServer) { server.blockDials = true })
-		socket.drop()
+		server.set(func(server *fakeServer) { server.blockProvider = true })
+		connecting := make(chan error, 1)
+
+		go func() { connecting <- channel.Connect(t.Context()) }()
+
 		synctest.Wait()
+		assertCode(t, lobby.Publish(t.Context(), []byte("during connect")), ErrNotConnected)
 
-		if channel.State() != StateReconnecting {
+		synctest.Sleep(15 * time.Second)
+		assertCode(t, <-connecting, ErrTimeout)
+
+		if channel.State() != StateFailed {
 			t.Fatalf("state %s", channel.State())
 		}
 
-		assertCode(t, chat.Publish(t.Context(), []byte("x")), ErrNotConnected)
+		assertCode(t, lobby.Publish(t.Context(), []byte("after failed")), ErrNotConnected)
 		channel.Close()
-		assertCode(t, chat.Publish(t.Context(), []byte("x")), ErrNotConnected)
-		assertCommands(t, socket)
+		assertCode(t, lobby.Publish(t.Context(), []byte("after close")), ErrNotConnected)
+
+		if server.socketCount() != 0 {
+			t.Fatalf("%d sockets", server.socketCount())
+		}
 	})
-}
+} // end function TestPublishFailsWhileNoRecoveryIsInProgress
 
 func TestPublishRefusesInvalidInputBeforeWriting(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -121,7 +165,7 @@ func TestPublishRefusesInvalidInputBeforeWriting(t *testing.T) {
 		assertCommands(t, socket, "@PUB\n$7\ndefault\n$3\nm-1\n$0\n\n")
 		channel.Close()
 	})
-}
+} // end function TestPublishRefusesInvalidInputBeforeWriting
 
 func TestPublishesWaitBehindAFullWriter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -139,7 +183,7 @@ func TestPublishesWaitBehindAFullWriter(t *testing.T) {
 		err := lobby.PublishWithMessageID(t.Context(), []byte("x"), "m-128")
 		assertCode(t, err, ErrBackpressure)
 
-		if want := "64 publishes are already waiting to be sent. Retry once some have gone out."; err.Error() != want {
+		if want := "The publish queue is full (size 64). Retry once some publishes have gone out."; err.Error() != want {
 			t.Fatalf("message %q", err.Error())
 		}
 
@@ -151,13 +195,63 @@ func TestPublishesWaitBehindAFullWriter(t *testing.T) {
 			}
 		}
 
-		if len(socket.commands()) != 128 || channel.State() != StateConnected {
-			t.Fatalf("%d commands, state %s", len(socket.commands()), channel.State())
+		// They drain in the order they were published.
+		var want []string
+
+		for index := range 128 {
+			want = append(want, publishFrame("default", "m-"+strconv.Itoa(index), "x"))
+		}
+
+		assertCommands(t, socket, want...)
+
+		if channel.State() != StateConnected {
+			t.Fatalf("state %s", channel.State())
 		}
 
 		channel.Close()
 	})
-}
+} // end function TestPublishesWaitBehindAFullWriter
+
+func TestPublishQueueSizeBoundsWaitingPublishes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectClientChannel(t, ClientOptions{PublishQueueSize: 1})
+		lobby := channel.DefaultSegment()
+		release := socket.holdWrites()
+		var results []<-chan error
+
+		// 64 fill the writer.
+		for index := range 64 {
+			results = append(results, publishAsync(t, lobby, "m-"+strconv.Itoa(index), "x"))
+			synctest.Wait()
+		}
+
+		waiting := publishAsync(t, lobby, "waiting", "x")
+		synctest.Wait()
+
+		err := lobby.PublishWithMessageID(t.Context(), []byte("x"), "refused")
+		assertCode(t, err, ErrBackpressure)
+
+		if want := "The publish queue is full (size 1). Retry once some publishes have gone out."; err.Error() != want {
+			t.Fatalf("message %q", err.Error())
+		}
+
+		release()
+
+		for _, result := range append(results, waiting) {
+			if err := <-result; err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		commands := socket.commands()
+
+		if len(commands) != 65 || commands[64] != publishFrame("default", "waiting", "x") {
+			t.Fatalf("%d commands, last %q", len(commands), commands[len(commands)-1])
+		}
+
+		channel.Close()
+	})
+} // end function TestPublishQueueSizeBoundsWaitingPublishes
 
 func TestMaximumSizeCommandFitsOnlyAnEmptyWriter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -200,7 +294,7 @@ func TestMaximumSizeCommandFitsOnlyAnEmptyWriter(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestMaximumSizeCommandFitsOnlyAnEmptyWriter
 
 // A write the socket refuses breaks the connection, so the publish reports
 // DeliveryUnknown, is never resent, and the channel reconnects.
@@ -220,7 +314,7 @@ func TestFailedWriteIsDeliveryUnknown(t *testing.T) {
 		assertCommands(t, server.socket(1))
 		channel.Close()
 	})
-}
+} // end function TestFailedWriteIsDeliveryUnknown
 
 func TestCancellingAPublishWithdrawsItUntilItIsWritten(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -248,7 +342,7 @@ func TestCancellingAPublishWithdrawsItUntilItIsWritten(t *testing.T) {
 		assertCommands(t, socket, publishFrame("chat", "m-1", "x"))
 		channel.Close()
 	})
-}
+} // end function TestCancellingAPublishWithdrawsItUntilItIsWritten
 
 func TestCancellingAPublishMidWriteIsDeliveryUnknown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -264,7 +358,7 @@ func TestCancellingAPublishMidWriteIsDeliveryUnknown(t *testing.T) {
 		assertCode(t, <-result, ErrDeliveryUnknown)
 		channel.Close()
 	})
-}
+} // end function TestCancellingAPublishMidWriteIsDeliveryUnknown
 
 func TestInterestsAreRestoredOnConnectInRegistrationOrder(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -288,7 +382,7 @@ func TestInterestsAreRestoredOnConnectInRegistrationOrder(t *testing.T) {
 		)
 		channel.Close()
 	})
-}
+} // end function TestInterestsAreRestoredOnConnectInRegistrationOrder
 
 func TestSubscriptionsWaitBehindAFullWriterAheadOfPublishes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -323,7 +417,7 @@ func TestSubscriptionsWaitBehindAFullWriterAheadOfPublishes(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestSubscriptionsWaitBehindAFullWriterAheadOfPublishes
 
 func TestMoreThan64SubscriptionsAllRestore(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -345,7 +439,7 @@ func TestMoreThan64SubscriptionsAllRestore(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestMoreThan64SubscriptionsAllRestore
 
 func TestSubscribeOnAClosedChannelFails(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -359,7 +453,18 @@ func TestSubscribeOnAClosedChannelFails(t *testing.T) {
 			t.Fatalf("message %q", err.Error())
 		}
 	})
-}
+} // end function TestSubscribeOnAClosedChannelFails
+
+func TestAListenerAloneSendsNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		segment(t, channel, "chat").OnMessage(func([]byte, MessageMetadata) {})
+		channel.Events().OnMessage(func([]byte, MessageMetadata) {})
+		synctest.Wait()
+		assertCommands(t, socket)
+		channel.Close()
+	})
+} // end function TestAListenerAloneSendsNothing
 
 func TestDeliveriesReachOnlyTheirSegment(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -375,7 +480,7 @@ func TestDeliveriesReachOnlyTheirSegment(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestDeliveriesReachOnlyTheirSegment
 
 func TestDeliveriesReachEveryHandleWithEveryField(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -403,7 +508,7 @@ func TestDeliveriesReachEveryHandleWithEveryField(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestDeliveriesReachEveryHandleWithEveryField
 
 func TestDeliveriesAreDeduplicatedEvenWithoutListeners(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -418,7 +523,7 @@ func TestDeliveriesAreDeduplicatedEvenWithoutListeners(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestDeliveriesAreDeduplicatedEvenWithoutListeners
 
 func TestDeduplicationWindowEvictsTheOldest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -437,7 +542,23 @@ func TestDeduplicationWindowEvictsTheOldest(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestDeduplicationWindowEvictsTheOldest
+
+func TestDeduplicationWindowSizeIsConfigurable(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectClientChannel(t, ClientOptions{DeduplicationWindowSize: 1})
+		delivered := recordMessageIDs(segment(t, channel, "chat"))
+
+		// The second "a" is dropped. "b" evicts "a", so the third is delivered.
+		receiveAll(socket, messageFrame("chat", "a", "x"), messageFrame("chat", "a", "x"), messageFrame("chat", "b", "x"), messageFrame("chat", "a", "x"))
+
+		if !slices.Equal(delivered.all(), []string{"a", "b", "a"}) {
+			t.Fatalf("delivered %v", delivered.all())
+		}
+
+		channel.Close()
+	})
+} // end function TestDeduplicationWindowSizeIsConfigurable
 
 func TestDeduplicationSurvivesReconnectAndClearsOnConnect(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -465,7 +586,7 @@ func TestDeduplicationSurvivesReconnectAndClearsOnConnect(t *testing.T) {
 
 		fresh.Close()
 	})
-}
+} // end function TestDeduplicationSurvivesReconnectAndClearsOnConnect
 
 func TestNullIDDeliveryIsDroppedWithoutDroppingTheConnection(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -488,7 +609,7 @@ func TestNullIDDeliveryIsDroppedWithoutDroppingTheConnection(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestNullIDDeliveryIsDroppedWithoutDroppingTheConnection
 
 func TestUnknownCommandsAreSkippedSilently(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -504,7 +625,7 @@ func TestUnknownCommandsAreSkippedSilently(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestUnknownCommandsAreSkippedSilently
 
 func TestUndecodableMessagesAreReportedAndTheConnectionStays(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -525,7 +646,7 @@ func TestUndecodableMessagesAreReportedAndTheConnectionStays(t *testing.T) {
 		assertProtocolError(t, reported[1], "Expected a binary WebSocket message.", "Message", 0)
 		channel.Close()
 	})
-}
+} // end function TestUndecodableMessagesAreReportedAndTheConnectionStays
 
 func TestNoticesAreRawAndServerErrorsKeepTheConnection(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -557,7 +678,7 @@ func TestNoticesAreRawAndServerErrorsKeepTheConnection(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestNoticesAreRawAndServerErrorsKeepTheConnection
 
 func TestPermissionDenialNamesItsCommandAndSegment(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -576,7 +697,7 @@ func TestPermissionDenialNamesItsCommandAndSegment(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestPermissionDenialNamesItsCommandAndSegment
 
 func TestEveryServerErrorTypeSurfacesWithEveryField(t *testing.T) {
 	for _, errorType := range []string{"ParserError", "SendError", "PermissionDeniedError", "RateLimitError", "MessageSizeLimitError", "InternalError", "SomeFutureError"} {
@@ -598,7 +719,7 @@ func TestEveryServerErrorTypeSurfacesWithEveryField(t *testing.T) {
 			channel.Close()
 		})
 	}
-}
+} // end function TestEveryServerErrorTypeSurfacesWithEveryField
 
 func TestMalformedServerErrorTextStillSurfaces(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -620,7 +741,7 @@ func TestMalformedServerErrorTextStillSurfaces(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestMalformedServerErrorTextStillSurfaces
 
 func TestPanickingMessageListenersAreContained(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -634,6 +755,7 @@ func TestPanickingMessageListenersAreContained(t *testing.T) {
 			removeSecond()
 			panic("listener-secret")
 		})
+
 		removeSecond = chat.OnMessage(func([]byte, MessageMetadata) { order.record("second") })
 		chat.OnMessage(func([]byte, MessageMetadata) { order.record("third") })
 		receiveAll(socket, messageFrame("chat", "id-1", "x"))
@@ -644,7 +766,136 @@ func TestPanickingMessageListenersAreContained(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestPanickingMessageListenersAreContained
+
+func recordChannelMessageIDs(channel *Channel) *recorder[string] {
+	identifiers := &recorder[string]{}
+	channel.Events().OnMessage(func(_ []byte, metadata MessageMetadata) { identifiers.record(metadata.MessageID) })
+
+	return identifiers
+} // end function recordChannelMessageIDs
+
+func TestChannelListenerReceivesEverySegment(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		seen := &recorder[string]{}
+		channel.Events().OnMessage(func(payload []byte, metadata MessageMetadata) {
+			seen.record(metadata.SegmentID + ":" + string(payload))
+		})
+
+		segment(t, channel, "chat").OnMessage(func([]byte, MessageMetadata) {})
+
+		receiveAll(socket, messageFrame("chat", "id-1", "hi"), messageFrame("default", "id-2", "yo"), messageFrame("joined-by-publish", "id-3", "ok"))
+
+		if want := []string{"chat:hi", "default:yo", "joined-by-publish:ok"}; !slices.Equal(seen.all(), want) {
+			t.Fatalf("seen %v", seen.all())
+		}
+
+		channel.Close()
+	})
+} // end function TestChannelListenerReceivesEverySegment
+
+func TestSegmentListenersRunBeforeChannelListeners(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		order := &recorder[string]{}
+		channel.Events().OnMessage(func([]byte, MessageMetadata) { order.record("channel") })
+		segment(t, channel, "chat").OnMessage(func([]byte, MessageMetadata) { order.record("segment") })
+
+		receiveAll(socket, messageFrame("chat", "id-1", "x"))
+
+		if !slices.Equal(order.all(), []string{"segment", "channel"}) {
+			t.Fatalf("order %v", order.all())
+		}
+
+		channel.Close()
+	})
+} // end function TestSegmentListenersRunBeforeChannelListeners
+
+func TestChannelListenerSeesADuplicateOnceAndNeverAMissingID(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		delivered := recordChannelMessageIDs(channel)
+
+		receiveAll(socket, messageFrame("chat", "id-1", "x"), messageFrame("other", "id-1", "x"), messageFrame("chat", "", "x"))
+
+		if !slices.Equal(delivered.all(), []string{"id-1"}) {
+			t.Fatalf("delivered %v", delivered.all())
+		}
+
+		channel.Close()
+	})
+} // end function TestChannelListenerSeesADuplicateOnceAndNeverAMissingID
+
+func TestPanickingChannelListenerIsContainedAndRemovable(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		errorsSeen := recordErrors(channel)
+		stopPanicking := channel.Events().OnMessage(func([]byte, MessageMetadata) { panic("listener-secret") })
+		delivered := &recorder[string]{}
+		stopRecording := channel.Events().OnMessage(func(_ []byte, metadata MessageMetadata) { delivered.record(metadata.MessageID) })
+
+		receiveAll(socket, messageFrame("chat", "id-1", "x"))
+		stopPanicking()
+		stopRecording()
+		receiveAll(socket, messageFrame("chat", "id-2", "x"))
+
+		reported := errorsSeen.all()
+
+		if !slices.Equal(delivered.all(), []string{"id-1"}) || len(reported) != 1 || channel.State() != StateConnected {
+			t.Fatalf("delivered %v, errors %v", delivered.all(), reported)
+		}
+
+		assertCode(t, reported[0], ErrTransport)
+
+		if want := "A listener callback panicked; the channel recovered and kept running."; reported[0].Error() != want {
+			t.Fatalf("reported %q", reported[0].Error())
+		}
+
+		channel.Close()
+	})
+} // end function TestPanickingChannelListenerIsContainedAndRemovable
+
+func TestRemovingAChannelListenerRemovesOnlyThatListener(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		delivered := &recorder[string]{}
+		removeChannelListener := channel.Events().OnMessage(func([]byte, MessageMetadata) { delivered.record("removed") })
+		channel.Events().OnMessage(func([]byte, MessageMetadata) { delivered.record("channel") })
+		chat := segment(t, channel, "chat")
+		chat.OnMessage(func([]byte, MessageMetadata) { delivered.record("segment") })
+		subscribe(t, chat)
+
+		removeChannelListener()
+		removeChannelListener()
+		receiveAll(socket, messageFrame("chat", "id-1", "x"))
+
+		if !slices.Equal(delivered.all(), []string{"segment", "channel"}) {
+			t.Fatalf("delivered %v", delivered.all())
+		}
+
+		assertCommands(t, socket, "@SUB\n$4\nchat\n")
+		channel.Close()
+	})
+} // end function TestRemovingAChannelListenerRemovesOnlyThatListener
+
+// The server decides what arrives; the SDK never gates on subscriptions.
+func TestDeliveriesIgnoreTheSubscriptionState(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, _, socket := connectTestChannel(t)
+		chat := segment(t, channel, "chat")
+		delivered := recordMessageIDs(chat)
+		subscribe(t, chat).Cancel()
+
+		receiveAll(socket, messageFrame("chat", "id-1", "x"))
+
+		if !slices.Equal(delivered.all(), []string{"id-1"}) {
+			t.Fatalf("delivered %v", delivered.all())
+		}
+
+		channel.Close()
+	})
+} // end function TestDeliveriesIgnoreTheSubscriptionState
 
 func TestBatchesFanOutInArrivalOrder(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -658,7 +909,7 @@ func TestBatchesFanOutInArrivalOrder(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestBatchesFanOutInArrivalOrder
 
 // LIMIT-01: a received message is never size-checked.
 func TestDeliveriesOverOneMebibyteArrive(t *testing.T) {
@@ -674,7 +925,7 @@ func TestDeliveriesOverOneMebibyteArrive(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestDeliveriesOverOneMebibyteArrive
 
 func TestTimestampsKeepTheirFullRange(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -689,4 +940,4 @@ func TestTimestampsKeepTheirFullRange(t *testing.T) {
 
 		channel.Close()
 	})
-}
+} // end function TestTimestampsKeepTheirFullRange

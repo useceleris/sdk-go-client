@@ -20,18 +20,18 @@ func TestTextPayloadsRoundTrip(t *testing.T) {
 			t.Fatalf("%q decoded as %q and %v", text, decoded, err)
 		}
 	}
-}
+} // end function TestTextPayloadsRoundTrip
 
 func TestTextPayloadReplacesInvalidUTF8(t *testing.T) {
 	if payload := TextPayload("a\xffb"); string(payload) != "a�b" {
 		t.Fatalf("encoded %q", payload)
 	}
-}
+} // end function TestTextPayloadReplacesInvalidUTF8
 
 func TestReadTextRejectsInvalidUTF8(t *testing.T) {
 	_, err := ReadText([]byte{0x80})
 	assertConfigurationError(t, err, "Payload is not valid UTF-8, so it cannot be read as text.")
-}
+} // end function TestReadTextRejectsInvalidUTF8
 
 func TestJSONPayloadsRoundTrip(t *testing.T) {
 	type value struct {
@@ -57,7 +57,7 @@ func TestJSONPayloadsRoundTrip(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(decoded, original) {
 		t.Fatalf("decoded %#v and %v", decoded, err)
 	}
-}
+} // end function TestJSONPayloadsRoundTrip
 
 func TestJSONPayloadRejectsUnserializableValues(t *testing.T) {
 	type cyclic struct {
@@ -84,11 +84,11 @@ func TestJSONPayloadRejectsUnserializableValues(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestJSONPayloadRejectsUnserializableValues
 
 func zero() float64 {
 	return 0
-}
+} // end function zero
 
 func TestReadJSONRejectsInvalidPayloads(t *testing.T) {
 	_, err := ReadJSON[any]([]byte("{ not json"))
@@ -106,7 +106,7 @@ func TestReadJSONRejectsInvalidPayloads(t *testing.T) {
 
 	_, err = ReadJSON[any]([]byte(strings.Repeat("[", 100_000) + strings.Repeat("]", 100_000)))
 	assertConfigurationError(t, err, "Payload is valid UTF-8 but not valid JSON.")
-}
+} // end function TestReadJSONRejectsInvalidPayloads
 
 func TestPayloadCodecsRoundTrip(t *testing.T) {
 	type body struct{ Text string }
@@ -129,7 +129,7 @@ func TestPayloadCodecsRoundTrip(t *testing.T) {
 	if decoded, err := codec.ReadPayload(payload); err != nil || decoded.Text != "hello" {
 		t.Fatalf("decoded %#v and %v", decoded, err)
 	}
-}
+} // end function TestPayloadCodecsRoundTrip
 
 func TestPayloadCodecsPassTheCallersErrorsThrough(t *testing.T) {
 	failure := errors.New("synthetic-decoder-failure")
@@ -149,7 +149,7 @@ func TestPayloadCodecsPassTheCallersErrorsThrough(t *testing.T) {
 	if _, err := codec.ReadPayload(nil); !errors.Is(err, failure) {
 		t.Fatalf("got %v, want the decoder's own error", err)
 	}
-}
+} // end function TestPayloadCodecsPassTheCallersErrorsThrough
 
 func TestPayloadCodecsRequireBothFunctions(t *testing.T) {
 	_, err := NewPayloadCodec[string](nil, func([]byte) (string, error) { return "", nil })
@@ -157,7 +157,7 @@ func TestPayloadCodecsRequireBothFunctions(t *testing.T) {
 
 	_, err = NewPayloadCodec[string](func(string) ([]byte, error) { return nil, nil }, nil)
 	assertConfigurationError(t, err, "Codec must provide encode and decode functions.")
-}
+} // end function TestPayloadCodecsRequireBothFunctions
 
 func assertConfigurationError(t *testing.T, err error, message string) {
 	t.Helper()
@@ -175,4 +175,4 @@ func assertConfigurationError(t *testing.T, err error, message string) {
 	if errors.Unwrap(err) != nil {
 		t.Fatalf("error wraps a cause: %v", err)
 	}
-}
+} // end function assertConfigurationError

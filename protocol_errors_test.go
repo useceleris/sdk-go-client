@@ -53,7 +53,7 @@ func TestDecodingLocatesEachFailure(t *testing.T) {
 			t.Fatalf("%q: error text %q", test.wire, err.Error())
 		}
 	}
-}
+} // end function TestDecodingLocatesEachFailure
 
 func TestDecodingRejectsNonProtocolNumbers(t *testing.T) {
 	for _, text := range []string{"", " ", "0x10", "0o10", "0b10", "+1", "1 ", "\t1", "1\r\r", "--1", "1.5", "1e2", "١"} {
@@ -61,7 +61,7 @@ func TestDecodingRejectsNonProtocolNumbers(t *testing.T) {
 			t.Fatalf("%q: got %v, want a protocol error", text, err)
 		}
 	}
-}
+} // end function TestDecodingRejectsNonProtocolNumbers
 
 func TestDecodingPreservesAcceptedDecimalSpellings(t *testing.T) {
 	for text, want := range map[string]int64{"0001": 1, "-0": 0, "-0001": -1} {
@@ -71,7 +71,7 @@ func TestDecodingPreservesAcceptedDecimalSpellings(t *testing.T) {
 			t.Fatalf("%q: got %#v and %v", text, message, err)
 		}
 	}
-}
+} // end function TestDecodingPreservesAcceptedDecimalSpellings
 
 func TestDecodingNeverRepeatsReceivedBytes(t *testing.T) {
 	data := join([]byte("@MSG\n+"), []byte{255}, []byte("synthetic-secret\n"))
@@ -88,4 +88,4 @@ func TestDecodingNeverRepeatsReceivedBytes(t *testing.T) {
 	if strings.Contains(err.Error(), "synthetic-secret") {
 		t.Fatalf("error repeats received bytes: %v", err)
 	}
-}
+} // end function TestDecodingNeverRepeatsReceivedBytes

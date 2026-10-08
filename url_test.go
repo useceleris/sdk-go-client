@@ -21,7 +21,7 @@ func TestUnsafeBaseURLsAreRefused(t *testing.T) {
 			t.Errorf("%q: got %v", baseURL, err)
 		}
 	}
-}
+} // end function TestUnsafeBaseURLsAreRefused
 
 func TestLoopbackNeedsTheExplicitOptIn(t *testing.T) {
 	for _, host := range []string{"localhost", "LOCALHOST", "127.0.0.1", "127.1.2.3", "[::1]"} {
@@ -39,7 +39,7 @@ func TestLoopbackNeedsTheExplicitOptIn(t *testing.T) {
 			t.Errorf("%s accepted as loopback", host)
 		}
 	}
-}
+} // end function TestLoopbackNeedsTheExplicitOptIn
 
 func TestCredentialURLsKeepThePathAndEncodeValuesOnce(t *testing.T) {
 	reference := strings.Repeat("a", 255)
@@ -69,7 +69,7 @@ func TestCredentialURLsKeepThePathAndEncodeValuesOnce(t *testing.T) {
 			t.Errorf("%s: base URL changed", base)
 		}
 	}
-}
+} // end function TestCredentialURLsKeepThePathAndEncodeValuesOnce
 
 func TestCredentialURLsKeepAnEncodedBasePath(t *testing.T) {
 	original, err := validateBaseURL("wss://example.test/a%2Fb/", false)
@@ -78,7 +78,9 @@ func TestCredentialURLsKeepAnEncodedBasePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := credentialURL(original, "room", Credentials{Payload: "p", Signature: "s"}); !strings.HasPrefix(got, "wss://example.test/a%2Fb/channel/room?") {
+	got := credentialURL(original, "room", Credentials{Payload: "p", Signature: "s"})
+
+	if !strings.HasPrefix(got, "wss://example.test/a%2Fb/channel/room?") {
 		t.Fatalf("url %q", got)
 	}
-}
+} // end function TestCredentialURLsKeepAnEncodedBasePath

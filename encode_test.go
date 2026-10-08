@@ -21,7 +21,7 @@ func TestEncodingVectors(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestEncodingVectors
 
 func TestEncodingRejectsInvalidCommands(t *testing.T) {
 	cases := map[string]func() ([]byte, error){
@@ -47,7 +47,7 @@ func TestEncodingRejectsInvalidCommands(t *testing.T) {
 			}
 		})
 	}
-}
+} // end function TestEncodingRejectsInvalidCommands
 
 func TestEncodingRejectsIllFormedIdentifiers(t *testing.T) {
 	for _, identifier := range invalidIdentifierVectors {
@@ -68,7 +68,7 @@ func TestEncodingRejectsIllFormedIdentifiers(t *testing.T) {
 			}
 		}
 	}
-}
+} // end function TestEncodingRejectsIllFormedIdentifiers
 
 func TestEncodingCountsTheWholeCommandAgainstTheLimit(t *testing.T) {
 	// 2 MiB is the whole encoded command, not the payload: "@PUB\n",
@@ -93,7 +93,7 @@ func TestEncodingCountsTheWholeCommandAgainstTheLimit(t *testing.T) {
 	if encoded, _ := encodeSegmentCommand("SUB", "chat"); string(encoded) != "@SUB\n$4\nchat\n" {
 		t.Fatalf("a refused command affected the next: %q", encoded)
 	}
-}
+} // end function TestEncodingCountsTheWholeCommandAgainstTheLimit
 
 func TestEncodingCopiesThePayload(t *testing.T) {
 	storage := []byte{99, 0, 255, 99}
@@ -110,7 +110,7 @@ func TestEncodingCopiesThePayload(t *testing.T) {
 	if want := join([]byte("@PUB\n$1\ns\n$-1\n$2\n"), []byte{0, 255, 10}); !bytes.Equal(encoded, want) {
 		t.Fatalf("encoded %q, want %q", encoded, want)
 	}
-}
+} // end function TestEncodingCopiesThePayload
 
 func TestEncodingNamesTheFieldWithoutTheInput(t *testing.T) {
 	_, err := encodePublish("synthetic-secret\n", "", nil)
@@ -128,4 +128,4 @@ func TestEncodingNamesTheFieldWithoutTheInput(t *testing.T) {
 	if strings.Contains(err.Error(), "synthetic-secret") || errors.Unwrap(err) != nil {
 		t.Fatalf("error repeats its input or wraps a cause: %v", err)
 	}
-}
+} // end function TestEncodingNamesTheFieldWithoutTheInput
