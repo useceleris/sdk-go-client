@@ -47,7 +47,7 @@ func TestRefusedCredentialsAreTransportFailures(t *testing.T) {
 		"invalid signature": signCredentials(clientID(), "wrong-secret"),
 		"unknown client":    signCredentials("no-such-client", signingSecret()),
 		"expired":           signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(-61 * time.Second).UnixMilli()}),
-		"an hour old":       signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(-59 * time.Minute).UnixMilli()}),
+		"59 minutes old":    signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(-59 * time.Minute).UnixMilli()}),
 		"future":            signCredentials(clientID(), signingSecret(), claim{"timestamp", time.Now().Add(5 * time.Minute).UnixMilli()}),
 		"other channel":     signCredentials(clientID(), signingSecret(), claim{"channel_references", []string{"some-other-channel"}}),
 
