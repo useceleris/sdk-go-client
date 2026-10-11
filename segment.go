@@ -21,9 +21,9 @@ func (segment *Segment) ID() string {
 // is cancelled; subscriptions are restored after every reconnect. The default
 // segment is joined automatically and never subscribed or unsubscribed.
 //
-// No acknowledgement exists: a denial arrives later through
-// [ChannelEventHandler.OnError]. It fails with [ErrNotConnected] once the
-// channel is closing or closed.
+// A subscription needs read access to the segment. No acknowledgement exists:
+// a denial arrives later through [ChannelEventHandler.OnError]. It fails with
+// [ErrNotConnected] once the channel is closing or closed.
 func (segment *Segment) Subscribe() (*Subscription, error) {
 	return segment.channel.addInterest(messageInterest, segment.id)
 } // end method Subscribe
@@ -66,6 +66,10 @@ func (segment *Segment) OnPresence(listener func(PresenceEvent)) (remove func())
 // returns once the socket accepted the bytes. That is not receipt, delivery
 // or durability: the protocol has no acknowledgements.
 //
+// A publish needs write access to the segment and does not join it. To
+// receive the messages of the segment, your own echo included, call
+// [Segment.Subscribe].
+//
 // While the channel reconnects, the publish waits in the queue and is sent
 // after the reconnect, once the restored subscriptions have gone out. It then
 // fails with the error [ChannelEventHandler.OnError] reports if recovery stops
@@ -75,9 +79,10 @@ func (segment *Segment) OnPresence(listener func(PresenceEvent)) (remove func())
 // and once failed or closed (there is no offline queue), with
 // [ErrBackpressure] when the publish queue ([ClientOptions.PublishQueueSize],
 // 64 by default) is already full, and with [ErrDeliveryUnknown] when the
-// socket failed mid-write; such a publish is never resent. A publish over the plan's payload cap still succeeds here
-// and is refused afterwards with a MessageSizeLimitError through
-// [ChannelEventHandler.OnError].
+// socket failed mid-write; such a publish is never resent. The plan's cap
+// counts the whole encoded command. A publish over the cap still succeeds
+// here, and the server refuses it afterwards with a MessageSizeLimitError
+// through [ChannelEventHandler.OnError].
 func (segment *Segment) Publish(ctx context.Context, payload []byte) error {
 	return segment.channel.publish(ctx, segment.id, payload, generateMessageID())
 } // end method Publish

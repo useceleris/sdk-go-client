@@ -124,7 +124,7 @@ A channel reference is 1 to 255 ASCII letters, digits, `-` or `_`. A segment id 
 
 ## Subscribing and receiving
 
-`Subscribe` registers interest in a segment. The first interest subscribes it, the last `Cancel` unsubscribes it, and subscriptions are restored after every reconnect. The protocol has no acknowledgement, so a denial arrives later through `OnError`. The default segment is joined on connect and never needs a subscription.
+`Subscribe` registers interest in a segment. The first interest subscribes it, the last `Cancel` unsubscribes it, and subscriptions are restored after every reconnect. The protocol has no acknowledgement, so a denial arrives later through `OnError`. A subscription needs read access to the segment, and a publish needs write access. The default segment is joined on connect and never needs a subscription.
 
 ```go
 stop := chat.OnMessage(func(payload []byte, metadata celeris.MessageMetadata) {
@@ -148,9 +148,10 @@ The payload is the SDK's own copy, shared by every listener of that delivery: tr
 The server, not a listener, controls the messages that you receive from a segment:
 
 - When you hold a subscription to a segment, the connection receives the messages of that segment. A listener alone receives no messages.
-- When the connection publishes to a segment, the server also joins the connection to that segment. With read and write access, the connection then receives messages. With write access only, the connection receives no messages. With read access only, the server does not accept the publish. To receive messages, call `Subscribe`.
-- When you cancel the last subscription of a segment, the server removes the connection from the segment. This also stops a join from a publish. A presence subscription does not join or keep a segment.
-- After a reconnect, the SDK subscribes again only to the segments that you hold a subscription for. To continue to receive the messages of a segment after a reconnect, call `Subscribe`.
+- A publish does not join the connection to the segment. To receive the messages of a segment, your own echo included, call `Subscribe`.
+- With write access only, the connection can publish, and the server refuses `Subscribe` with a `PermissionDeniedError` through `OnError`. With read access only, the connection can subscribe, and the server refuses the publish.
+- When you cancel the last subscription of a segment, the server removes the connection from the segment. A presence subscription does not join or keep a segment.
+- After a reconnect, the SDK subscribes again to the segments that you hold a subscription for.
 - The connection always receives the messages of `"default"`.
 - Listeners and subscriptions are different. When you remove one, the other does not change.
 
@@ -190,7 +191,7 @@ default:
 }
 ```
 
-While the channel reconnects, `Publish` waits: the publish stays in the publish queue and is sent after the reconnect, once your subscriptions are restored, or fails with the terminal error if recovery ends in `failed`, with `ErrCancelled` if you close the channel, or when its context ends. Before the first connect, while connecting, and once `failed` or closed, `Publish` returns `ErrNotConnected`. A publish over your plan's payload cap still returns `nil` and is refused afterwards with a `MessageSizeLimitError` through `OnError`. Publishing to a segment joins it server-side.
+While the channel reconnects, `Publish` waits: the publish stays in the publish queue and is sent after the reconnect, once your subscriptions are restored, or fails with the terminal error if recovery ends in `failed`, with `ErrCancelled` if you close the channel, or when its context ends. Before the first connect, while connecting, and once `failed` or closed, `Publish` returns `ErrNotConnected`. Your plan's cap counts the whole encoded command, not only the payload. A publish over the cap still returns `nil`, and the server refuses it afterwards with a `MessageSizeLimitError` through `OnError`. A publish does not join the segment: call `Subscribe` to receive from it.
 
 ## Payloads
 
@@ -340,13 +341,14 @@ Recovery restores every subscription and reports **possible gaps and duplicates*
 - No offline queue beyond a reconnect, no durable history, no global ordering. Publishes still waiting in the publish queue when the connection drops wait for the reconnect and go out in call order after the restored subscriptions; they fail with the terminal error if recovery ends in `failed`, and with `ErrCancelled` on `Close`. Publishes the socket had not started writing go back to the front of the queue in their order; the one being written when the connection dropped reports `ErrDeliveryUnknown` and is never sent again.
 - A `RateLimitError` never names the command it dropped, so the client pauses and resends what it sent in the last two seconds: subscriptions as their current state, then up to 64 publishes, each at most once and with its original id so receivers drop a copy that already arrived. After eight limits in a row the limit is treated as a used-up quota: resending stops, and dropped subscriptions are retried on a slow probe, after a minute and doubling to an hour. Resends count toward usage.
 - Subscriptions and publishes wait for room when the writer is full instead of failing. A subscription change goes out ahead of publishes, but never ahead of a publish to its own segment that was queued before it.
+- A publish does not join a segment, and a presence subscription does not. Only `Subscribe` joins.
 
 ## Limits and defaults
 
 | What             | Value                                                                                             |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
 | Outbound command | 2 MiB encoded, refused before any write                                                           |
-| Plan payload cap | 64 KiB free, 128 KiB standard, 512 KiB pro, 1024 KiB prime; enforced by the server                |
+| Plan cap         | 64 KiB free, 128 KiB standard, 512 KiB pro, 1024 KiB prime, on the whole encoded command; enforced by the server |
 | Writer bounds    | 64 commands / 2 MiB not yet written; `PublishQueueSize` queued publishes (64 by default), plus resends |
 | Rate-limit pause | 1 s plus full jitter growing with consecutive limits, at most 31 s                                |
 | Resends          | last 2 s of commands, at most 64 publishes, each once                                             |
