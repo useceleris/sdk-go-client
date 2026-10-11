@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -112,7 +113,7 @@ type outboundFrame struct {
 } // end struct outboundFrame
 
 // connection is one socket and the goroutines that drive it: a writer that
-// writes handed-off frames in order, a receiver that routes what arrives, and
+// writes handed-off frames in order, packed into batches (BATCH-01), a receiver that routes what arrives, and
 // a heartbeat that pings the server and finds a dead path. Its fields are
 // guarded by the channel's mutex.
 type connection struct {
@@ -124,12 +125,12 @@ type connection struct {
 	context context.Context
 	cancel  context.CancelFunc
 
-	// Frames handed to the writer and not yet written, the one being written
-	// first. They are bounded by count and bytes, so a maximum-size command
-	// always fits an empty writer.
+	// Frames handed to the writer and not yet written, the batch being
+	// written first: its size is writing. They are bounded by count and
+	// bytes, so a maximum-size command always fits an empty writer.
 	outbound      []*outboundFrame
 	outboundBytes int
-	writing       *outboundFrame
+	writing       int
 
 	ready *sync.Cond
 
@@ -185,10 +186,11 @@ func (connection *connection) handOff(frame *outboundFrame) {
 // reports whether there was one. A rate limit can requeue a publish still in
 // the writer, so it may have been handed over twice.
 func (connection *connection) remove(publish *queuedPublish) bool {
-	before := len(connection.outbound)
+	unstarted := connection.outbound[connection.writing:]
+	before := len(unstarted)
 
-	connection.outbound = slices.DeleteFunc(connection.outbound, func(frame *outboundFrame) bool {
-		if frame.publish != publish || frame == connection.writing {
+	unstarted = slices.DeleteFunc(unstarted, func(frame *outboundFrame) bool {
+		if frame.publish != publish {
 			return false
 		}
 
@@ -197,8 +199,17 @@ func (connection *connection) remove(publish *queuedPublish) bool {
 		return true
 	})
 
-	return len(connection.outbound) < before
+	connection.outbound = connection.outbound[:connection.writing+len(unstarted)]
+
+	return len(unstarted) < before
 } // end method remove
+
+// isWriting reports whether the batch the socket is writing holds publish.
+func (connection *connection) isWriting(publish *queuedPublish) bool {
+	return slices.ContainsFunc(connection.outbound[:connection.writing], func(frame *outboundFrame) bool {
+		return frame.publish == publish
+	})
+} // end method isWriting
 
 // abandon stops the connection without a closing handshake. The caller holds
 // the mutex, has detached the connection, and has taken back or failed the
@@ -222,8 +233,8 @@ func (connection *connection) abandon() {
 // failUnwritten fails every publish handed to this connection that the socket
 // never started writing.
 func (connection *connection) failUnwritten(err error) {
-	for _, frame := range connection.outbound {
-		if frame != connection.writing && frame.publish != nil {
+	for _, frame := range connection.outbound[connection.writing:] {
+		if frame.publish != nil {
 			frame.publish.settle(err)
 		}
 	}
@@ -240,11 +251,10 @@ func (connection *connection) failUnwritten(err error) {
 func (connection *connection) takeUnwritten() []*queuedPublish {
 	var publishes []*queuedPublish
 
-	for _, frame := range connection.outbound {
+	for _, frame := range connection.outbound[connection.writing:] {
 		publish := frame.publish
-		beingWritten := connection.writing != nil && connection.writing.publish == publish
 
-		if publish == nil || publish.settled || beingWritten || slices.Contains(publishes, publish) {
+		if publish == nil || publish.settled || connection.isWriting(publish) || slices.Contains(publishes, publish) {
 			continue
 		}
 
@@ -257,17 +267,54 @@ func (connection *connection) takeUnwritten() []*queuedPublish {
 	return publishes
 } // end method takeUnwritten
 
-// dropUnwritten empties the writer except for the frame the socket is
+// dropUnwritten empties the writer except for the batch the socket is
 // writing.
 func (connection *connection) dropUnwritten() {
-	if connection.writing != nil {
-		connection.outbound = []*outboundFrame{connection.writing}
-		connection.outboundBytes = len(connection.writing.data)
-	} else {
-		connection.outbound = nil
-		connection.outboundBytes = 0
+	connection.outbound = connection.outbound[:connection.writing]
+	connection.outboundBytes = 0
+
+	for _, frame := range connection.outbound {
+		connection.outboundBytes += len(frame.data)
 	}
 } // end method dropUnwritten
+
+// packBatch marks the frames at the front of the writer that go out together,
+// in order: at most maximumBatchCommands of them, within maximumBatchBytes
+// with the array header. A first frame larger than that goes alone. It
+// returns the bytes to write: a single command as it is, several in a `*N`
+// array.
+func (connection *connection) packBatch() []byte {
+	size := len(connection.outbound[0].data)
+	count := 1
+
+	for count < min(len(connection.outbound), maximumBatchCommands) {
+		next := size + len(connection.outbound[count].data)
+
+		// The array header is "*", the count and LF.
+		if 2+len(strconv.Itoa(count+1))+next > maximumBatchBytes {
+			break
+		}
+
+		size = next
+		count++
+	}
+
+	connection.writing = count
+
+	if count == 1 {
+		return connection.outbound[0].data
+	}
+
+	header := "*" + strconv.Itoa(count) + "\n"
+	data := make([]byte, 0, len(header)+size)
+	data = append(data, header...)
+
+	for _, frame := range connection.outbound[:count] {
+		data = append(data, frame.data...)
+	}
+
+	return data
+} // end method packBatch
 
 // writeLoop writes handed-off frames in order until the connection breaks, or
 // until it closes and every frame is flushed.
@@ -295,20 +342,25 @@ func (connection *connection) writeLoop() {
 			return
 		}
 
-		frame := connection.outbound[0]
-		connection.writing = frame
+		data := connection.packBatch()
 		channel.mutex.Unlock()
 
-		err := connection.socket.write(connection.context, frame.data)
+		err := connection.socket.write(connection.context, data)
 
 		channel.mutex.Lock()
-		connection.writing = nil
-		connection.outbound = connection.outbound[1:]
-		connection.outboundBytes -= len(frame.data)
+		batch := connection.outbound[:connection.writing]
+		connection.outbound = connection.outbound[connection.writing:]
+		connection.writing = 0
+
+		for _, frame := range batch {
+			connection.outboundBytes -= len(frame.data)
+		}
 
 		if err != nil {
-			if frame.publish != nil {
-				frame.publish.settle(newError(ErrDeliveryUnknown, "The socket failed while writing the publish, so it may or may not have been sent."))
+			for _, frame := range batch {
+				if frame.publish != nil {
+					frame.publish.settle(newError(ErrDeliveryUnknown, "The socket failed while writing the publish, so it may or may not have been sent."))
+				}
 			}
 
 			// A write the socket refuses leaves the server's view of this
@@ -331,8 +383,10 @@ func (connection *connection) writeLoop() {
 			return
 		}
 
-		if frame.publish != nil {
-			frame.publish.settle(nil)
+		for _, frame := range batch {
+			if frame.publish != nil {
+				frame.publish.settle(nil)
+			}
 		}
 
 		if channel.connection == connection {

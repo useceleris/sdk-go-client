@@ -633,6 +633,12 @@ func (channel *Channel) receiveServerError(message errorMessage) {
 		channel.queue.receiveRateLimit()
 	}
 
+	// A publish refused for its size names itself by message id; the other
+	// commands in its frame ran (BATCH-01).
+	if messageID, ok := message.resource.(string); ok && serverError.Type == MessageSizeLimitError && message.subType == "PUB" {
+		channel.queue.forgetRefused(messageID)
+	}
+
 	channel.queueError(serverError)
 } // end method receiveServerError
 
@@ -926,7 +932,7 @@ func (channel *Channel) publish(ctx context.Context, segmentID string, payload [
 		return encodeErr
 	}
 
-	publish, err := channel.queue.publish(segmentID, data)
+	publish, err := channel.queue.publish(segmentID, messageID, data)
 	channel.mutex.Unlock()
 
 	if err != nil {
@@ -962,7 +968,7 @@ func (channel *Channel) cancelPublish(publish *queuedPublish, cancelled error) {
 	connection := publish.connection
 	withdrawn := channel.queue.withdraw(publish)
 	removed := connection != nil && connection.remove(publish)
-	writing := connection != nil && connection.writing != nil && connection.writing.publish == publish
+	writing := connection != nil && connection.isWriting(publish)
 
 	switch {
 	case writing:

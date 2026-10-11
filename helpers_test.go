@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -154,18 +155,63 @@ func (socket *fakeSocket) isClosed() bool {
 	}
 } // end method isClosed
 
-func (socket *fakeSocket) commands() []string {
+// frames returns every write, as written.
+func (socket *fakeSocket) frames() []string {
 	socket.mutex.Lock()
 	defer socket.mutex.Unlock()
 
 	return slices.Clone(socket.written)
+} // end method frames
+
+// commands returns every command written, in order, with each `*N` frame
+// split into its commands.
+func (socket *fakeSocket) commands() []string {
+	var commands []string
+
+	for _, frame := range socket.frames() {
+		commands = append(commands, splitFrame(frame)...)
+	}
+
+	return commands
 } // end method commands
 
-func (socket *fakeSocket) setFailWrites(fail bool) {
+func splitFrame(frame string) []string {
+	if !strings.HasPrefix(frame, "*") {
+		return []string{frame}
+	}
+
+	var commands []string
+
+	offset := strings.IndexByte(frame, '\n') + 1
+
+	for offset < len(frame) {
+		start := offset
+		offset += strings.IndexByte(frame[offset:], '\n') + 1
+
+		// Fields follow the command name until the next command starts.
+		for offset < len(frame) && frame[offset] != '@' {
+			lineEnd := offset + strings.IndexByte(frame[offset:], '\n')
+			next := lineEnd + 1
+
+			if length, err := strconv.Atoi(frame[offset+1 : lineEnd]); frame[offset] == '$' && err == nil && length >= 0 {
+				next += length + 1
+			}
+
+			offset = next
+		}
+
+		commands = append(commands, frame[start:offset])
+	}
+
+	return commands
+} // end function splitFrame
+
+// refuseWrites makes every later write fail.
+func (socket *fakeSocket) refuseWrites() {
 	socket.mutex.Lock()
-	socket.failWrites = fail
+	socket.failWrites = true
 	socket.mutex.Unlock()
-} // end method setFailWrites
+} // end method refuseWrites
 
 // holdWrites makes writes wait until release is called.
 func (socket *fakeSocket) holdWrites() (release func()) {

@@ -323,7 +323,7 @@ func TestTakingBackUnwrittenPublishesSkipsWrittenAndDuplicateCopies(t *testing.T
 	first := &queuedPublish{segmentID: "first"}
 	second := &queuedPublish{segmentID: "second"}
 	writing := &outboundFrame{data: []byte("in-flight"), publish: inFlight}
-	connection := &connection{writing: writing}
+	connection := &connection{writing: 1}
 	connection.outbound = []*outboundFrame{
 		writing,
 		{data: []byte("first"), publish: first},

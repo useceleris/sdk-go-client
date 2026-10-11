@@ -302,7 +302,7 @@ func TestFailedWriteIsDeliveryUnknown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		channel, server, socket := connectTestChannel(t)
 		errorsSeen := recordErrors(channel)
-		socket.setFailWrites(true)
+		socket.refuseWrites()
 
 		assertCode(t, channel.DefaultSegment().Publish(t.Context(), []byte("x")), ErrDeliveryUnknown)
 		synctest.Wait()

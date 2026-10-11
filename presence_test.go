@@ -411,7 +411,7 @@ func TestPendingQueryFailsOnConnectionLossAndOnClose(t *testing.T) {
 func TestRefusedQueryWriteSpendsItsID(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		channel, server, socket := connectTestChannel(t)
-		socket.setFailWrites(true)
+		socket.refuseWrites()
 		pending := queryAsync(t.Context(), segment(t, channel, "chat"), 1, 25)
 		assertCode(t, (<-pending).err, ErrTransport)
 		synctest.Wait()

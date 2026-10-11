@@ -54,6 +54,11 @@ func TestRateLimitPausesThenResendsSubscriptionsBeforePublishes(t *testing.T) {
 		}
 
 		assertCommands(t, socket, "@SUB\n$4\nchat\n", "@PRES_SUB\n$4\nchat\n", publishFrame("lobby", "m-1", "a"), publishFrame("lobby", "m-2", "b"))
+
+		// The resend goes out packed in one frame.
+		if frames := socket.frames(); len(frames) != 1 {
+			t.Fatalf("%d frames", len(frames))
+		}
 	})
 } // end function TestRateLimitPausesThenResendsSubscriptionsBeforePublishes
 
@@ -494,7 +499,7 @@ func TestRefusedSubscriptionWriteReplacesTheSocket(t *testing.T) {
 		channel, server, socket := connectTestChannel(t)
 		errorsSeen := recordErrors(channel)
 		states := recordStates(channel)
-		socket.setFailWrites(true)
+		socket.refuseWrites()
 
 		subscribe(t, segment(t, channel, "chat"))
 		synctest.Wait()

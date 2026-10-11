@@ -300,8 +300,8 @@ func TestPublishTakenBackFreesRoomForTheNext(t *testing.T) {
 
 		// The writer cannot take the first before it is taken back.
 		channel.mutex.Lock()
-		taken, _ := channel.queue.publish("default", first)
-		waiting, _ := channel.queue.publish("default", second)
+		taken, _ := channel.queue.publish("default", "b", first)
+		waiting, _ := channel.queue.publish("default", "c", second)
 		channel.cancelPublish(taken, newError(ErrCancelled, "cancelled"))
 		channel.mutex.Unlock()
 

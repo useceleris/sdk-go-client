@@ -18,6 +18,7 @@ var interestKinds = [...]interestKind{messageInterest, presenceInterest}
 
 type queuedPublish struct {
 	segmentID string
+	messageID string
 	data      []byte
 
 	// Its place in the order commands were queued in.
@@ -96,7 +97,7 @@ func (queue *commandQueue) queueInterest(kind interestKind, segmentID string) {
 } // end method queueInterest
 
 // publish queues a publish, which settles once written to the socket.
-func (queue *commandQueue) publish(segmentID string, data []byte) (*queuedPublish, error) {
+func (queue *commandQueue) publish(segmentID, messageID string, data []byte) (*queuedPublish, error) {
 	limit := queue.channel.client.publishQueueSize
 
 	if len(queue.publishes) >= limit {
@@ -104,7 +105,7 @@ func (queue *commandQueue) publish(segmentID string, data []byte) (*queuedPublis
 	}
 
 	queue.sequence++
-	publish := &queuedPublish{segmentID: segmentID, data: data, sequence: queue.sequence, result: make(chan error, 1)}
+	publish := &queuedPublish{segmentID: segmentID, messageID: messageID, data: data, sequence: queue.sequence, result: make(chan error, 1)}
 	queue.publishes = append(queue.publishes, publish)
 	queue.drain()
 
@@ -466,6 +467,15 @@ func (queue *commandQueue) forget(publish *queuedPublish) {
 		return sent.publish == publish
 	})
 } // end method forget
+
+// forgetRefused drops the publishes the server refused for their size from
+// the resend record, so a later rate limit does not send, and bill, them
+// again.
+func (queue *commandQueue) forgetRefused(messageID string) {
+	queue.recentPublishes = slices.DeleteFunc(queue.recentPublishes, func(sent sentPublish) bool {
+		return sent.publish.messageID == messageID
+	})
+} // end method forgetRefused
 
 func (queue *commandQueue) recordSentInterest(kind interestKind, segmentID string) {
 	now := time.Now()
