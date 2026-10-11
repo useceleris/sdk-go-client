@@ -15,13 +15,13 @@ func generateMessageID() string {
 	random := make([]byte, messageIDRandomBytes)
 	_, _ = rand.Read(random) // never fails: crypto/rand aborts the program instead
 
-	return messageIDPrefix(sdkLanguage, sdkVersion) + hex.EncodeToString(random)
+	return messageIDPrefix(sdkVersion) + hex.EncodeToString(random)
 } // end function generateMessageID
 
-// messageIDPrefix is "msg__", the language, "_v", the version, "__". An id
-// holds only letters, digits, dots and underscores, so any other character of
-// the version, such as the hyphen of a pre-release, becomes an underscore.
-func messageIDPrefix(language, version string) string {
+// messageIDPrefix is "msg__go_v", the version, "__". An id holds only letters,
+// digits, dots and underscores, so any other character of the version, such as
+// the hyphen of a pre-release, becomes an underscore.
+func messageIDPrefix(version string) string {
 	safeVersion := strings.Map(func(character rune) rune {
 		letter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
 		digit := character >= '0' && character <= '9'
@@ -33,5 +33,5 @@ func messageIDPrefix(language, version string) string {
 		return '_'
 	}, version)
 
-	return "msg__" + language + "_v" + safeVersion + "__"
+	return "msg__go_v" + safeVersion + "__"
 } // end function messageIDPrefix

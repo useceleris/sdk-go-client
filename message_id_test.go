@@ -11,7 +11,7 @@ import (
 
 func TestGeneratedIDsNameTheSDKAndItsVersionThen32HexDigits(t *testing.T) {
 	identifier := generateMessageID()
-	random, found := strings.CutPrefix(identifier, messageIDPrefix("go", sdkVersion))
+	random, found := strings.CutPrefix(identifier, messageIDPrefix(sdkVersion))
 
 	if !found || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(random) {
 		t.Fatalf("identifier %q", identifier)
@@ -48,7 +48,7 @@ func TestEveryOtherVersionCharacterBecomesAnUnderscore(t *testing.T) {
 	}
 
 	for version, expected := range cases {
-		if prefix := messageIDPrefix("go", version); prefix != expected {
+		if prefix := messageIDPrefix(version); prefix != expected {
 			t.Fatalf("version %q: got %q, want %q", version, prefix, expected)
 		}
 	}
