@@ -102,7 +102,8 @@ func TestPublishCompletesOnLocalAcceptance(t *testing.T) {
 		publish(t, segment(t, channel, "chat"), "m-1", "yo")
 
 		commands := socket.commands()
-		generated := regexp.MustCompile("^@PUB\n\\$7\ndefault\n\\$48\nmsg__go_v1\\.0\\.0__[0-9a-f]{32}\n\\$2\nhi\n$")
+		prefix := messageIDPrefix("go", sdkVersion)
+		generated := regexp.MustCompile("^@PUB\n\\$7\ndefault\n\\$" + strconv.Itoa(len(prefix)+32) + "\n" + regexp.QuoteMeta(prefix) + "[0-9a-f]{32}\n\\$2\nhi\n$")
 
 		if len(commands) != 2 || !generated.MatchString(commands[0]) || commands[1] != "@PUB\n$4\nchat\n$3\nm-1\n$2\nyo\n" {
 			t.Fatalf("commands %q", commands)

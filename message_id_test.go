@@ -3,14 +3,17 @@ package celeris
 import (
 	"errors"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"testing/synctest"
 )
 
 func TestGeneratedIDsNameTheSDKAndItsVersionThen32HexDigits(t *testing.T) {
 	identifier := generateMessageID()
+	random, found := strings.CutPrefix(identifier, messageIDPrefix("go", sdkVersion))
 
-	if !regexp.MustCompile(`^msg__go_v1\.0\.0__[0-9a-f]{32}$`).MatchString(identifier) {
+	if !found || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(random) {
 		t.Fatalf("identifier %q", identifier)
 	}
 } // end function TestGeneratedIDsNameTheSDKAndItsVersionThen32HexDigits
@@ -61,7 +64,7 @@ func TestAGeneratedIDIsSentAsABulkString(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if expected := "@PUB\n$4\nchat\n$48\n" + identifier + "\n$2\nhi\n"; string(frame) != expected {
+	if expected := "@PUB\n$4\nchat\n$" + strconv.Itoa(len(identifier)) + "\n" + identifier + "\n$2\nhi\n"; string(frame) != expected {
 		t.Fatalf("frame %q", frame)
 	}
 } // end function TestAGeneratedIDIsSentAsABulkString
