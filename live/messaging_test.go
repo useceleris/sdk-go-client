@@ -72,9 +72,10 @@ func TestDeliversOnTheDefaultSegmentWithoutSubscribing(t *testing.T) {
 } // end function TestDeliversOnTheDefaultSegmentWithoutSubscribing
 
 // Needs the qualification app on a plan with message_size_limit_in_kb of at
-// least 1024. Framed, the full payload is larger than 1 MiB (LIMIT-01).
+// least 1024. The cap counts the whole encoded command, so the larger payload
+// is the cap less its framing; its delivery is larger than 1 MiB (LIMIT-01).
 func TestRoundTripsLargeBinaryPayloads(t *testing.T) {
-	for _, size := range []int{100 * 1024, 1024 * 1024} {
+	for _, size := range []int{100 * 1024, 1024*1024 - 96} {
 		reference := uniqueChannelReference("large")
 		publisher := connectedChannel(t, reference)
 		receiver := connectedChannel(t, reference)
@@ -404,18 +405,20 @@ func TestRoundTripsAnEmptyPayload(t *testing.T) {
 	}
 } // end function TestRoundTripsAnEmptyPayload
 
-func TestRefusesAPayloadOneByteOverThe1024KiBPlanCap(t *testing.T) {
-	channel := connectedChannel(t, uniqueChannelReference("cap-plus-one"))
+// The cap counts the command's framing, so a payload of the cap itself makes
+// a command over it.
+func TestRefusesAFull1024KiBPayload(t *testing.T) {
+	channel := connectedChannel(t, uniqueChannelReference("cap-full"))
 	rejected := awaitEvent(t, channel.Events().OnError, serverErrorOfType(celeris.MessageSizeLimitError), "the MessageSizeLimitError frame", 20*time.Second)
 
-	if err := segment(t, channel, "bulk").Publish(t.Context(), make([]byte, 1024*1024+1)); err != nil {
+	if err := segment(t, channel, "bulk").Publish(t.Context(), make([]byte, 1024*1024)); err != nil {
 		t.Fatal(err)
 	}
 
 	if rejection := rejected(); !strings.Contains(rejection.Error(), "size limit = 1024 KB") || channel.State() != celeris.StateConnected {
 		t.Fatalf("got %v, state %s", rejection, channel.State())
 	}
-} // end function TestRefusesAPayloadOneByteOverThe1024KiBPlanCap
+} // end function TestRefusesAFull1024KiBPayload
 
 func TestDeliversAPacedBurstOf50MessagesInPublishOrderOneTimeEach(t *testing.T) {
 	reference := uniqueChannelReference("burst")
@@ -453,3 +456,81 @@ func TestDeliversAPacedBurstOf50MessagesInPublishOrderOneTimeEach(t *testing.T) 
 		t.Fatalf("%d unique message ids, want 50", len(messageIDs))
 	}
 } // end function TestDeliversAPacedBurstOf50MessagesInPublishOrderOneTimeEach
+
+func TestRefusesOverCapPublishesInABurstByMessageIDAndDeliversTheRest(t *testing.T) {
+	reference := uniqueChannelReference("batch")
+	publisher := connectedChannel(t, reference)
+	receiver := connectedChannel(t, reference)
+	refused := make(chan *celeris.ServerError, 2)
+
+	publisher.Events().OnError(func(err error) {
+		if serverError, ok := errors.AsType[*celeris.ServerError](err); ok {
+			refused <- serverError
+		}
+	})
+
+	chat := segment(t, receiver, "chat")
+	received := collect(chat)
+	subscribe(t, chat)
+	settle()
+	bodies := make([]string, 20)
+
+	for index := range bodies {
+		bodies[index] = "b" + strconv.Itoa(index)
+	}
+
+	// Publishes from their own goroutines wait for the writer together, so it
+	// packs them (BATCH-01); their order is not defined.
+	target := segment(t, publisher, "chat")
+	overCap := make([]byte, 1024*1024+1)
+	var group sync.WaitGroup
+
+	for _, messageID := range []string{"too-big-1", "too-big-2"} {
+		group.Go(func() {
+			if err := target.PublishWithMessageID(t.Context(), overCap, messageID); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+
+	for _, body := range bodies {
+		group.Go(func() {
+			if err := target.Publish(t.Context(), []byte(body)); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+
+	group.Wait()
+	eventually(t, func() bool { return len(received.all()) >= len(bodies) }, "the burst", 30*time.Second)
+	settle()
+
+	got := payloads(received)
+	slices.Sort(got)
+	want := slices.Clone(bodies)
+	slices.Sort(want)
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("received %q, want %q once each", got, want)
+	}
+
+	var resources []any
+
+	for range 2 {
+		select {
+		case serverError := <-refused:
+			if serverError.Type != celeris.MessageSizeLimitError || serverError.SubType != "PUB" {
+				t.Fatalf("refused with %v", serverError)
+			}
+
+			resources = append(resources, serverError.Resource)
+		case <-time.After(20 * time.Second):
+			t.Fatalf("refusals %v, want two", resources)
+		}
+	}
+
+	if !slices.ContainsFunc(resources, func(resource any) bool { return resource == "too-big-1" }) ||
+		!slices.ContainsFunc(resources, func(resource any) bool { return resource == "too-big-2" }) {
+		t.Fatalf("refused resources %v", resources)
+	}
+} // end function TestRefusesOverCapPublishesInABurstByMessageIDAndDeliversTheRest
