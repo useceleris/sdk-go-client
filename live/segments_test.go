@@ -219,18 +219,60 @@ func TestKeepsOtherListenersAndTheSubscriptionWhenOneListenerStops(t *testing.T)
 	assertPayloads(t, kept, "one", "two")
 } // end function TestKeepsOtherListenersAndTheSubscriptionWhenOneListenerStops
 
-// Membership the server grants without a message subscription (SEG-01).
+// A publish is not a membership: only a subscription receives (SEG-01).
 
-func TestDeliversToASegmentJoinedByPublishing(t *testing.T) {
-	publisher, receiver := pair(t, "publish-join")
+func TestDeliversNothingToAConnectionThatOnlyPublishesAndDeliversOnceItSubscribes(t *testing.T) {
+	publisher, receiver := pair(t, "publish-no-join")
 	chat := collect(segment(t, receiver, "chat"))
-	publishText(t, receiver, "chat", "joining")
+	subscribe(t, segment(t, publisher, "chat"))
 	time.Sleep(1500 * time.Millisecond)
 
-	publishAndAwait(t, publisher, receiver, "chat", "after")
+	// The publish lands, which proves that it ran on the server.
+	publishAndAwait(t, receiver, publisher, "chat", "from-receiver")
+	publishText(t, publisher, "chat", "unheard")
+	confirmQuiet(t, publisher, receiver)
+	assertPayloads(t, chat)
 
-	assertPayloads(t, chat, "after")
-} // end function TestDeliversToASegmentJoinedByPublishing
+	subscribe(t, segment(t, receiver, "chat"))
+	time.Sleep(1500 * time.Millisecond)
+	publishAndAwait(t, publisher, receiver, "chat", "heard")
+
+	assertPayloads(t, chat, "heard")
+} // end function TestDeliversNothingToAConnectionThatOnlyPublishesAndDeliversOnceItSubscribes
+
+func TestGivesNoEchoOnANamedSegmentBeforeASubscription(t *testing.T) {
+	publisher, echoing := pair(t, "publish-no-echo", claim{"allow_echo", true})
+	chat := collect(segment(t, echoing, "chat"))
+
+	publishText(t, echoing, "chat", "unheard")
+	confirmQuiet(t, publisher, echoing)
+	assertPayloads(t, chat)
+
+	subscribe(t, segment(t, echoing, "chat"))
+	time.Sleep(1500 * time.Millisecond)
+	publishAndAwait(t, echoing, echoing, "chat", "echoed")
+
+	assertPayloads(t, chat, "echoed")
+} // end function TestGivesNoEchoOnANamedSegmentBeforeASubscription
+
+func TestDoesNotListAConnectionThatOnlyPublishesInThePresenceOfTheSegment(t *testing.T) {
+	publisher, receiver := pair(t, "publish-no-presence")
+	subscribe(t, segment(t, publisher, "chat"))
+	time.Sleep(1500 * time.Millisecond)
+
+	publishAndAwait(t, receiver, publisher, "chat", "from-receiver")
+	time.Sleep(3 * time.Second)
+
+	page, err := segment(t, publisher, "chat").PresenceList(t.Context(), 1, 25)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(page.Connections) != 1 {
+		t.Fatalf("listed %+v, want one connection", page.Connections)
+	}
+} // end function TestDoesNotListAConnectionThatOnlyPublishesInThePresenceOfTheSegment
 
 // Watching presence is not membership: it neither joins nor holds.
 func TestNeverJoinsOrHoldsASegmentForAPresenceSubscription(t *testing.T) {
@@ -258,48 +300,28 @@ func TestNeverJoinsOrHoldsASegmentForAPresenceSubscription(t *testing.T) {
 	assertPayloads(t, chat, "one")
 } // end function TestNeverJoinsOrHoldsASegmentForAPresenceSubscription
 
-func TestLeavesASegmentJoinedByPublishingOnTheLastCancel(t *testing.T) {
-	publisher, receiver := pair(t, "publish-leave")
-	chat := collect(segment(t, receiver, "chat"))
-	publishText(t, receiver, "chat", "joining")
-	membership := subscribe(t, segment(t, receiver, "chat"))
-	time.Sleep(1500 * time.Millisecond)
+// Write access publishes and read access subscribes. The two are separate.
 
-	membership.Cancel()
-	time.Sleep(1500 * time.Millisecond)
-	publishText(t, publisher, "chat", "late")
-	confirmQuiet(t, publisher, receiver)
-
-	assertPayloads(t, chat)
-} // end function TestLeavesASegmentJoinedByPublishingOnTheLastCancel
-
-// Read access is checked at join, so a token's permissions decide whether
-// publishing makes a segment deliver.
-
-func TestReceivesAfterPublishingWithAReadWriteToken(t *testing.T) {
-	publisher, receiver := pair(t, "publish-read-write", tokenPermission(true, true))
-	chat := collect(segment(t, receiver, "chat"))
-	publishText(t, receiver, "chat", "joining")
-	time.Sleep(1500 * time.Millisecond)
-
-	publishAndAwait(t, publisher, receiver, "chat", "after")
-
-	assertPayloads(t, chat, "after")
-} // end function TestReceivesAfterPublishingWithAReadWriteToken
-
-func TestReceivesNothingAfterPublishingWithAWriteOnlyToken(t *testing.T) {
+func TestRefusesAWriteOnlyTokensSubscriptionAndStillDeliversItsPublish(t *testing.T) {
 	publisher, receiver := pair(t, "publish-write-only", tokenPermission(false, true))
 	chat := collect(segment(t, receiver, "chat"))
 	subscribe(t, segment(t, publisher, "chat"))
 	time.Sleep(1500 * time.Millisecond)
 
-	// The publish lands, which proves the write-only connection is up.
-	publishAndAwait(t, receiver, publisher, "chat", "joining")
+	refused := awaitDenial(t, receiver, "SUB", "chat")
+	subscribe(t, segment(t, receiver, "chat"))
+	refused()
+
+	publishAndAwait(t, receiver, publisher, "chat", "written")
 	publishText(t, publisher, "chat", "unheard")
 	time.Sleep(2500 * time.Millisecond)
 
 	assertPayloads(t, chat)
-} // end function TestReceivesNothingAfterPublishingWithAWriteOnlyToken
+
+	if state := receiver.State(); state != celeris.StateConnected {
+		t.Fatalf("state %s", state)
+	}
+} // end function TestRefusesAWriteOnlyTokensSubscriptionAndStillDeliversItsPublish
 
 func TestRefusesAReadOnlyTokensPublishAndDeliversOnceSubscribed(t *testing.T) {
 	publisher, receiver := pair(t, "publish-read-only", tokenPermission(true, false))
@@ -374,10 +396,11 @@ func TestChannelListenerCatchesDeliveriesNoSegmentListenerAskedFor(t *testing.T)
 		}
 	})
 
-	publishText(t, receiver, "joined", "joining")
+	// A subscription with no segment listener, and the default segment.
+	subscribe(t, segment(t, receiver, "unlistened"))
 	time.Sleep(1500 * time.Millisecond)
 
-	publishText(t, publisher, "joined", "x")
+	publishText(t, publisher, "unlistened", "x")
 	publishText(t, publisher, "default", "y")
 
 	select {
@@ -390,7 +413,7 @@ func TestChannelListenerCatchesDeliveriesNoSegmentListenerAskedFor(t *testing.T)
 	got := slices.Sorted(slices.Values(seen))
 	mutex.Unlock()
 
-	if want := []string{"default:y", "joined:x"}; !slices.Equal(got, want) {
+	if want := []string{"default:y", "unlistened:x"}; !slices.Equal(got, want) {
 		t.Fatalf("seen %q, want %q", got, want)
 	}
 } // end function TestChannelListenerCatchesDeliveriesNoSegmentListenerAskedFor

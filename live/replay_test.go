@@ -237,22 +237,32 @@ func TestReplaysEachSegmentsBacklogWhenThatSegmentIsJoined(t *testing.T) {
 	assertPayloads(t, beta, "b1")
 } // end function TestReplaysEachSegmentsBacklogWhenThatSegmentIsJoined
 
-func TestReplaysToASegmentJoinedByPublishing(t *testing.T) {
-	reference := uniqueChannelReference("replay-publish-join")
+func TestStartsNoReplayWithAPublishAndReplaysOnTheSubscription(t *testing.T) {
+	reference := uniqueChannelReference("replay-publish-no-join")
 	publisher := connectedChannel(t, reference)
+
+	// A member keeps the segment, and its backlog, on the server.
+	subscribe(t, segment(t, publisher, "history"))
+	settle()
 	publishAll(t, publisher, "history", "h1")
 	settle()
 
 	receiver := connectedChannel(t, reference, claim{"replay", true})
 	history := segment(t, receiver, "history")
 	delivered := collect(history)
+	publishAll(t, receiver, "history", "no-join")
+	time.Sleep(2500 * time.Millisecond)
+	assertPayloads(t, delivered)
+
 	replay := awaitBody(t, history.OnMessage, "h1")
-	publishAll(t, receiver, "history", "joining")
+	subscribe(t, history)
 	replay()
 	settle()
 
-	assertPayloads(t, delivered, "h1")
-} // end function TestReplaysToASegmentJoinedByPublishing
+	if got := payloads(delivered); !slices.Contains(got, "h1") {
+		t.Fatalf("received %q, want the replay of %q", got, "h1")
+	}
+} // end function TestStartsNoReplayWithAPublishAndReplaysOnTheSubscription
 
 func TestRecoversWhatARejoinMissedAndDropsWhatItAlreadyDelivered(t *testing.T) {
 	reference := uniqueChannelReference("replay-rejoin")

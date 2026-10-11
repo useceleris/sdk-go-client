@@ -152,13 +152,15 @@ func TestReportsAReadOnlyTokensPublishAsPermissionDenied(t *testing.T) {
 	}
 } // end function TestReportsAReadOnlyTokensPublishAsPermissionDenied
 
-func TestKeepsAWriteOnlyTokenPublishingWhileReceivingNothing(t *testing.T) {
+func TestKeepsAWriteOnlyTokenPublishingWhileItsSubscriptionIsRefused(t *testing.T) {
 	reference := uniqueChannelReference("writeonly")
 	writeOnly := connectedChannel(t, reference, claim{"token_permission", map[string]bool{"read": false, "write": true}})
 	reader := connectedChannel(t, reference)
+	refused := awaitDenial(t, writeOnly, "SUB", "chat")
 	writerSaw := collect(segment(t, writeOnly, "chat"))
 	subscribe(t, segment(t, writeOnly, "chat"))
 	subscribe(t, segment(t, reader, "chat"))
+	refused()
 	time.Sleep(1500 * time.Millisecond)
 
 	if err := segment(t, writeOnly, "chat").Publish(t.Context(), []byte("one-way")); err != nil {
@@ -171,7 +173,7 @@ func TestKeepsAWriteOnlyTokenPublishingWhileReceivingNothing(t *testing.T) {
 	if len(writerSaw.all()) != 0 {
 		t.Fatal("a write-only token received")
 	}
-} // end function TestKeepsAWriteOnlyTokenPublishingWhileReceivingNothing
+} // end function TestKeepsAWriteOnlyTokenPublishingWhileItsSubscriptionIsRefused
 
 // RES-05: subscriptions the server drops under its rate limit recover.
 func TestRecoversSubscriptionsTheServerDropsUnderItsRateLimit(t *testing.T) {

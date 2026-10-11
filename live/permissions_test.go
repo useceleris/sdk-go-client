@@ -66,14 +66,16 @@ func TestLetsAReadOnlySegmentReceiveAndRefusesItsPublish(t *testing.T) {
 	}
 } // end function TestLetsAReadOnlySegmentReceiveAndRefusesItsPublish
 
-func TestLetsAWriteOnlySegmentPublishAndReceiveNothing(t *testing.T) {
+func TestLetsAWriteOnlySegmentPublishAndRefusesItsSubscription(t *testing.T) {
 	reference := uniqueChannelReference("perm-write")
 	reader := connectedChannel(t, reference)
 	limited := connectedChannel(t, reference, segmentPermissions...)
 	writeonly := segment(t, limited, "writeonly")
 	received := collect(writeonly)
 	subscribe(t, segment(t, reader, "writeonly"))
+	refused := awaitDenial(t, limited, "SUB", "writeonly")
 	subscribe(t, writeonly)
+	refused()
 	settle()
 
 	publishAndAwait(t, limited, reader, "writeonly", "from-limited")
@@ -81,7 +83,32 @@ func TestLetsAWriteOnlySegmentPublishAndReceiveNothing(t *testing.T) {
 	time.Sleep(2500 * time.Millisecond)
 
 	assertPayloads(t, received)
-} // end function TestLetsAWriteOnlySegmentPublishAndReceiveNothing
+
+	if state := limited.State(); state != celeris.StateConnected {
+		t.Fatalf("state %s", state)
+	}
+} // end function TestLetsAWriteOnlySegmentPublishAndRefusesItsSubscription
+
+func TestReplaysAWriteOnlyPublishToALaterSubscriber(t *testing.T) {
+	reference := uniqueChannelReference("perm-write-replay")
+	limited := connectedChannel(t, reference, segmentPermissions...)
+	received := collect(segment(t, limited, "writeonly"))
+	// No connection is in the segment when the write-only token publishes.
+	publishText(t, limited, "writeonly", "kept")
+	settle()
+
+	reader := connectedChannel(t, reference, claim{"replay", true})
+	history := segment(t, reader, "writeonly")
+	replayed := awaitBody(t, history.OnMessage, "kept")
+	subscribe(t, history)
+	replayed()
+
+	assertPayloads(t, received)
+
+	if state := limited.State(); state != celeris.StateConnected {
+		t.Fatalf("state %s", state)
+	}
+} // end function TestReplaysAWriteOnlyPublishToALaterSubscriber
 
 func TestRefusesPresenceOnASegmentWithoutReadAccess(t *testing.T) {
 	limited := connectedChannel(t, uniqueChannelReference("perm-presence"), segmentPermissions...)

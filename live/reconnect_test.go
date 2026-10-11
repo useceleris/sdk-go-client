@@ -464,24 +464,6 @@ func TestRecoversEveryMissedMessageAfterALongerOutageWithFailedAttempts(t *testi
 	assertPayloads(t, delivered, "m1", "m2", "m3")
 } // end function TestRecoversEveryMissedMessageAfterALongerOutageWithFailedAttempts
 
-func TestDoesNotRejoinASegmentThatTheConnectionJoinedOnlyByPublishing(t *testing.T) {
-	setup := newReconnectSetup(t, "reconnect-publish-join", true)
-	team := collect(segment(t, setup.receiver, "team"))
-	setup.connect(t)
-	publishText(t, setup.receiver, "team", "joining")
-	settle()
-	publishAndAwait(t, setup.publisher, setup.receiver, "team", "before")
-
-	setup.startOutage(t)
-	setup.endOutage(t)
-	settle()
-
-	publishText(t, setup.publisher, "team", "after")
-	confirmQuiet(t, setup.publisher, setup.receiver)
-
-	assertPayloads(t, team, "before")
-} // end function TestDoesNotRejoinASegmentThatTheConnectionJoinedOnlyByPublishing
-
 func TestAnnouncesTheNewConnectionAndRestoresItsPresenceSubscriptionAfterAReconnect(t *testing.T) {
 	setup := newReconnectSetup(t, "reconnect-presence", true)
 	room := segment(t, setup.receiver, "room")
