@@ -225,7 +225,7 @@ func TestSubscriptionChangeNeverOvertakesAnEarlierPublishToItsSegment(t *testing
 
 		synctest.Wait()
 
-		// Publishing joins the segment, so the UNSUB has to follow it.
+		// The commands for one segment keep their call order.
 		assertCommands(t, socket, publishFrame("chat", "m-1", "x"), "@UNSUB\n$4\nchat\n")
 	})
 } // end function TestSubscriptionChangeNeverOvertakesAnEarlierPublishToItsSegment

@@ -785,9 +785,9 @@ func TestChannelListenerReceivesEverySegment(t *testing.T) {
 
 		segment(t, channel, "chat").OnMessage(func([]byte, MessageMetadata) {})
 
-		receiveAll(socket, messageFrame("chat", "id-1", "hi"), messageFrame("default", "id-2", "yo"), messageFrame("joined-by-publish", "id-3", "ok"))
+		receiveAll(socket, messageFrame("chat", "id-1", "hi"), messageFrame("default", "id-2", "yo"), messageFrame("no-listener", "id-3", "ok"))
 
-		if want := []string{"chat:hi", "default:yo", "joined-by-publish:ok"}; !slices.Equal(seen.all(), want) {
+		if want := []string{"chat:hi", "default:yo", "no-listener:ok"}; !slices.Equal(seen.all(), want) {
 			t.Fatalf("seen %v", seen.all())
 		}
 

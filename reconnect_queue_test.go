@@ -151,11 +151,10 @@ func TestRestorationPrecedesPublishesQueuedAcrossTheReconnect(t *testing.T) {
 	})
 } // end function TestRestorationPrecedesPublishesQueuedAcrossTheReconnect
 
-// A subscription cancelled while reconnecting still follows a publish to its
-// segment queued before it, so the segment ends up left as asked. A publish
-// never subscribes to presence, so a cancelled presence subscription needs no
-// command on the new socket.
-func TestCancellingBehindAQueuedPublishLeavesTheSegmentAfterIt(t *testing.T) {
+// A new socket holds no subscription, and a publish does not make one. Thus a
+// subscription cancelled while reconnecting needs no command on the new
+// socket, also behind a queued publish to its segment.
+func TestCancellingWhileReconnectingSendsNoUnsubscribeOnTheNewSocket(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		channel, server, socket := connectTestChannel(t)
 		gamma := segment(t, channel, "gamma")
@@ -170,9 +169,31 @@ func TestCancellingBehindAQueuedPublishLeavesTheSegmentAfterIt(t *testing.T) {
 
 		next := reconnectNow(t, channel, server)
 		assertSent(t, queued)
-		assertCommands(t, next, publishFrame("gamma", "g-1", "x"), "@UNSUB\n$5\ngamma\n")
+		assertCommands(t, next, publishFrame("gamma", "g-1", "x"))
 	})
-} // end function TestCancellingBehindAQueuedPublishLeavesTheSegmentAfterIt
+} // end function TestCancellingWhileReconnectingSendsNoUnsubscribeOnTheNewSocket
+
+// An unsubscribe that waits behind a publish when the socket drops does not
+// go to the new socket. Only the publish goes out.
+func TestUnsubscribeWaitingAtTheDropIsNotSentOnTheNewSocket(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		channel, server, socket := connectTestChannel(t)
+		gamma := segment(t, channel, "gamma")
+		subscription := subscribe(t, gamma)
+
+		// The rate-limit pause holds the publish, and the cancel behind it, in
+		// the queue.
+		receiveAll(socket, rateLimitFrame())
+		queued := publishAsync(t, gamma, "g-1", "x")
+		synctest.Wait()
+		subscription.Cancel()
+		dropUnreachable(t, channel, server, socket)
+
+		next := reconnectNow(t, channel, server)
+		assertSent(t, queued)
+		assertCommands(t, next, publishFrame("gamma", "g-1", "x"))
+	})
+} // end function TestUnsubscribeWaitingAtTheDropIsNotSentOnTheNewSocket
 
 func TestPublishWhileReconnectingIsRefusedWhenTheQueueIsFull(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

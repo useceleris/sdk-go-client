@@ -851,11 +851,10 @@ func (channel *Channel) interests(kind interestKind) *orderedMap[int] {
 	return &channel.presenceInterests
 } // end method interests
 
-// queueInterestSync does nothing before the first socket: installing one
-// syncs every held interest. While reconnecting the change waits in the
-// queue, behind the publishes queued before it.
+// queueInterestSync does nothing without a socket: installing one syncs
+// every held interest.
 func (channel *Channel) queueInterestSync(kind interestKind, segmentID string) {
-	if channel.connection != nil || channel.state == StateReconnecting {
+	if channel.connection != nil {
 		channel.queue.queueInterest(kind, segmentID)
 	}
 } // end method queueInterestSync

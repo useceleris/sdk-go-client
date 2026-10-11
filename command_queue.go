@@ -203,26 +203,23 @@ func (queue *commandQueue) reset(err error) {
 	}
 
 	queue.publishes = nil
-
-	for _, kind := range interestKinds {
-		queue.pendingInterests[kind].clear()
-	}
-
 	queue.dropConnection()
 } // end method reset
 
 // dropConnection forgets everything tied to the socket that dropped and keeps
-// what still waits to be sent (QUEUE-01): publishes never handed to a socket,
-// and subscription changes, which still follow the publishes queued before
-// them. A copy queued for a rate-limit resend is dropped: a publish the socket
-// never wrote comes back from the writer (connection.takeUnwritten), and one
-// it wrote is never sent again. The rate-limit streak and the probe schedule
-// stay, since a reconnect does not refill a quota.
+// the publishes never handed to a socket, which wait for the next one
+// (QUEUE-01). No subscription change waits: the next socket holds no
+// subscription, and restore syncs every held one to it. A copy queued for a
+// rate-limit resend is dropped: a publish the socket never wrote comes back
+// from the writer (connection.takeUnwritten), and one it wrote is never sent
+// again. The rate-limit streak and the probe schedule stay, since a reconnect
+// does not refill a quota.
 func (queue *commandQueue) dropConnection() {
 	stopTimer(&queue.pauseTimer)
 	stopTimer(&queue.probeTimer)
 
 	for _, kind := range interestKinds {
+		queue.pendingInterests[kind].clear()
 		queue.abandonedInterests[kind].clear()
 	}
 
@@ -243,29 +240,15 @@ func (queue *commandQueue) putBack(publishes []*queuedPublish) {
 // restore syncs every held subscription to a new socket: messages, then
 // presence, each in registration order. A sequence of zero puts it ahead of
 // every queued publish, even one queued before the connection dropped, so the
-// connection is a member of its segments again before its publishes join
-// theirs (QUEUE-01).
+// connection is a member of its segments again before the publishes go out
+// (QUEUE-01).
 //
-// A new socket holds no subscription, so a waiting change that drops one is
-// kept only behind a queued publish to its segment, which joins it. A publish
-// never subscribes to presence.
+// A new socket holds no subscription, and a publish does not make one. Thus a
+// subscription cancelled without a socket needs no command.
 func (queue *commandQueue) restore() {
 	for _, kind := range interestKinds {
-		pending := &queue.pendingInterests[kind]
-
-		for _, segmentID := range pending.keys() {
-			published := slices.ContainsFunc(queue.publishes, func(publish *queuedPublish) bool {
-				return publish.segmentID == segmentID
-			})
-
-			if kind == presenceInterest || !published {
-				pending.remove(segmentID)
-			}
-		}
-
 		for _, segmentID := range queue.channel.interests(kind).keys() {
-			pending.remove(segmentID)
-			pending.set(segmentID, 0)
+			queue.pendingInterests[kind].set(segmentID, 0)
 		}
 	}
 
@@ -410,9 +393,9 @@ func (queue *commandQueue) drain() {
 } // end method drain
 
 // nextReadyInterest finds the first subscription change with no earlier
-// publish to its segment still queued: publishing joins the segment, so a
-// change has to follow the publishes queued before it for the segment to end
-// up as asked.
+// publish to its segment still queued: the commands for one segment keep
+// their call order, so a change follows the publishes queued before it
+// (RESEND-01).
 func (queue *commandQueue) nextReadyInterest() (interestKind, string, bool) {
 	for _, kind := range interestKinds {
 		ready := ""
